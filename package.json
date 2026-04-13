@@ -1,0 +1,20 @@
+{
+  "name": "training-dashboard",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+  "start": "concurrently \"npm run server\" \"npm run client\"",
+  "server": "cd backend && node server.js",
+  "client": "cd frontend && npm run dev",
+  "sync": "cd backend && node scripts/sync.js"
+},
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+  
+}

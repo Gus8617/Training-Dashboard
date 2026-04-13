@@ -1,0 +1,372 @@
+[
+  {
+    "id": 16960076872,
+    "name": "Natation en soirée",
+    "type": "Swim",
+    "distance": "1.27",
+    "moving_time": 27,
+    "start_date": "2026-01-06T18:49:53Z",
+    "average_heartrate": 142.4,
+    "suffer_score": 70,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 122,
+        "time": 353
+      },
+      {
+        "min": 123,
+        "max": 152,
+        "time": 1478
+      },
+      {
+        "min": 153,
+        "max": 167,
+        "time": 585
+      },
+      {
+        "min": 168,
+        "max": 182,
+        "time": 132
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 5
+      }
+    ]
+  },
+  {
+    "id": 16905015887,
+    "name": "ROUVY - Around Myvatn Lake | Iceland",
+    "type": "VirtualRide",
+    "distance": "20.90",
+    "moving_time": 42,
+    "start_date": "2026-01-01T16:32:25Z",
+    "average_heartrate": 120.9,
+    "suffer_score": 11,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 111,
+        "time": 336
+      },
+      {
+        "min": 112,
+        "max": 147,
+        "time": 2195
+      },
+      {
+        "min": 148,
+        "max": 165,
+        "time": 0
+      },
+      {
+        "min": 166,
+        "max": 182,
+        "time": 0
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16881969430,
+    "name": "Sortie vélo le matin",
+    "type": "Ride",
+    "distance": "62.02",
+    "moving_time": 140,
+    "start_date": "2025-12-30T08:08:26Z",
+    "average_heartrate": 145.8,
+    "suffer_score": 174,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 111,
+        "time": 76
+      },
+      {
+        "min": 112,
+        "max": 147,
+        "time": 4196
+      },
+      {
+        "min": 148,
+        "max": 165,
+        "time": 3978
+      },
+      {
+        "min": 166,
+        "max": 182,
+        "time": 163
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16871978568,
+    "name": "Course à pied le matin",
+    "type": "Run",
+    "distance": "11.07",
+    "moving_time": 66,
+    "start_date": "2025-12-29T09:21:16Z",
+    "average_heartrate": 145.7,
+    "suffer_score": 90,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 122,
+        "time": 196
+      },
+      {
+        "min": 123,
+        "max": 152,
+        "time": 3458
+      },
+      {
+        "min": 153,
+        "max": 167,
+        "time": 331
+      },
+      {
+        "min": 168,
+        "max": 182,
+        "time": 0
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16862553544,
+    "name": "Sortie vélo le matin",
+    "type": "Ride",
+    "distance": "45.84",
+    "moving_time": 109,
+    "start_date": "2025-12-28T09:02:47Z",
+    "average_heartrate": 146.7,
+    "suffer_score": 140,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 111,
+        "time": 86
+      },
+      {
+        "min": 112,
+        "max": 147,
+        "time": 3169
+      },
+      {
+        "min": 148,
+        "max": 165,
+        "time": 3134
+      },
+      {
+        "min": 166,
+        "max": 182,
+        "time": 203
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16841812171,
+    "name": "Course à pied le matin",
+    "type": "Run",
+    "distance": "11.16",
+    "moving_time": 63,
+    "start_date": "2025-12-26T07:29:39Z",
+    "average_heartrate": 148.6,
+    "suffer_score": 87,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 122,
+        "time": 278
+      },
+      {
+        "min": 123,
+        "max": 152,
+        "time": 1461
+      },
+      {
+        "min": 153,
+        "max": 167,
+        "time": 1916
+      },
+      {
+        "min": 168,
+        "max": 182,
+        "time": 137
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16818834943,
+    "name": "Course à pied le midi",
+    "type": "Run",
+    "distance": "3.08",
+    "moving_time": 14,
+    "start_date": "2025-12-23T11:06:08Z",
+    "average_heartrate": 146.9,
+    "suffer_score": 17,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 122,
+        "time": 26
+      },
+      {
+        "min": 123,
+        "max": 152,
+        "time": 593
+      },
+      {
+        "min": 153,
+        "max": 167,
+        "time": 270
+      },
+      {
+        "min": 168,
+        "max": 182,
+        "time": 0
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16818572518,
+    "name": "Course à pied le midi",
+    "type": "Run",
+    "distance": "3.46",
+    "moving_time": 20,
+    "start_date": "2025-12-23T10:32:17Z",
+    "average_heartrate": 135.9,
+    "suffer_score": 12,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 122,
+        "time": 96
+      },
+      {
+        "min": 123,
+        "max": 152,
+        "time": 1063
+      },
+      {
+        "min": 153,
+        "max": 167,
+        "time": 39
+      },
+      {
+        "min": 168,
+        "max": 182,
+        "time": 0
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16800866454,
+    "name": "Sortie vélo le matin",
+    "type": "Ride",
+    "distance": "44.58",
+    "moving_time": 113,
+    "start_date": "2025-12-21T08:57:32Z",
+    "average_heartrate": 140.5,
+    "suffer_score": 112,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 111,
+        "time": 476
+      },
+      {
+        "min": 112,
+        "max": 147,
+        "time": 3304
+      },
+      {
+        "min": 148,
+        "max": 165,
+        "time": 2996
+      },
+      {
+        "min": 166,
+        "max": 182,
+        "time": 41
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  },
+  {
+    "id": 16766808582,
+    "name": "Course à pied le midi",
+    "type": "Run",
+    "distance": "10.58",
+    "moving_time": 63,
+    "start_date": "2025-12-17T11:18:54Z",
+    "average_heartrate": 144.1,
+    "suffer_score": 74,
+    "hr_zones": [
+      {
+        "min": 0,
+        "max": 122,
+        "time": 66
+      },
+      {
+        "min": 123,
+        "max": 152,
+        "time": 3711
+      },
+      {
+        "min": 153,
+        "max": 167,
+        "time": 37
+      },
+      {
+        "min": 168,
+        "max": 182,
+        "time": 0
+      },
+      {
+        "min": 183,
+        "max": -1,
+        "time": 0
+      }
+    ]
+  }
+]
