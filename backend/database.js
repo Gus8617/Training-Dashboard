@@ -78,33 +78,68 @@ db.exec(`
   );
 `);
 
-// 5. Table des séances planifiées
+// 5. Table des séances planifiées (Version Améliorée pour Visuel Hebdo)
 db.exec(`
   CREATE TABLE IF NOT EXISTS training_plan (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,          -- Liaison avec ta table users
-    date TEXT NOT NULL,                -- YYYY-MM-DD
-    title TEXT,
-    description TEXT,
-    type TEXT,                         -- 'run', 'ride', 'swim', 'yoga'
-    planned_tss INTEGER,               -- Charge théorique
-    status TEXT DEFAULT 'planned',     -- 'planned', 'completed', 'skipped'
-    strava_id TEXT,                    -- Sera rempli quand Strava détectera la séance
-    FOREIGN KEY (user_id) REFERENCES users(id)
-    );`
-);
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,                     -- YYYY-MM-DD
+    start_time TEXT,                        -- AJOUT : ex: "12:00" (crucial pour caler la séance dans ton open slot)
+    title TEXT,                             -- ex: "PMA Développement" ou "Natation Club"
+    description TEXT,                       -- Détails des blocs
+    type TEXT,                              -- 'Run', 'Ride', 'Swim', 'Strength'
+    
+    -- Objectifs théoriques (Target) -> TOUT EN SECONDES
+    target_duration INTEGER,                -- Durée prévue en SECONDES (ex: 3600 pour 1h)
+    target_distance REAL,                   -- Distance prévue en km
+    target_load INTEGER,                    -- Charge théorique (TSS attendu)
+    target_intensity_zone TEXT,             -- 'LIT', 'MIT', 'HIT'
+    
+    -- Suivi & Réalité
+    status TEXT DEFAULT 'planned',          -- 'planned', 'completed', 'skipped', 'mutated'
+    strava_id TEXT UNIQUE,                  -- Clé de liaison vers l'activité réelle
+    recurring_session_id INTEGER,           -- AJOUT : Lie la séance à un rituel fixe (NULL si généré par l'algo)
+    
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (strava_id) REFERENCES activities(id),
+    FOREIGN KEY (recurring_session_id) REFERENCES recurring_sessions(id) -- Sécurité d'intégrité
+  );
+`);
 
-// 6. Table des contraintes (ton emploi du temps)
+//db.exec(`DROP TABLE IF EXISTS user_constraints;`);
+
+// 6. TABLE DES CONTRAINTES TEMPORELLES (Dispos & Verrous)
 db.exec(`
   CREATE TABLE IF NOT EXISTS user_constraints (
     user_id INTEGER NOT NULL,
-    day_of_week INTEGER,               -- 0-6
-    start_time TEXT,                   -- ex: "12:00"
-    end_time TEXT,                     -- ex: "13:30"
-    is_blocked BOOLEAN DEFAULT 0,
-    PRIMARY KEY (user_id, day_of_week, start_time),
+    day_of_week INTEGER,                -- 0 (Dimanche) à 6 (Samedi), NULL si specific_date
+    specific_date TEXT,                 -- "YYYY-MM-DD", NULL si récurrent
+    start_time TEXT NOT NULL,           -- ex: "12:00"
+    end_time TEXT NOT NULL,             -- ex: "13:30"
+    is_blocked INTEGER DEFAULT 0,       -- CHANGEMENT : 0 = Libre, 1 = Hybride (Indoor only), 2 = Lock strict
+    week_alternation TEXT DEFAULT 'all',-- 'all', 'even', 'odd'
+    PRIMARY KEY (user_id, day_of_week, specific_date, start_time, week_alternation),
     FOREIGN KEY (user_id) REFERENCES users(id)
-  );`
-);
+  );
+`);
+
+// 7. TABLE DES ENTRAÎNEMENTS FIXES RITUELS (Ex: Natation Club le Mardi)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS recurring_sessions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    day_of_week INTEGER NOT NULL,       -- 0 à 6
+    week_alternation TEXT DEFAULT 'all', -- 'all', 'even', 'odd' (pour la natation une semaine sur deux par exemple)
+    title TEXT NOT NULL,                -- ex: "Natation Club - Seuil"
+    type TEXT NOT NULL,                 -- "Swim", "Bike", "Run", "Strength"
+    target_intensity_zone TEXT,        -- "LIT", "MIT", "HIT"
+    duration_seconds INTEGER NOT NULL,  -- ex: 60
+    target_load INTEGER DEFAULT 0,      -- Le fameux TSS associé (ex: 45)
+    start_time TEXT,                    -- ex: "19:30" (optionnel, pour l'affichage)
+    description TEXT,
+    is_indoor DEFAULT 0,                 -- 0 = Outdoor, 1 = Indoor (ex: Piscine)
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  );
+`);
 
 module.exports = db;

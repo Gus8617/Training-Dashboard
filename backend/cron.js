@@ -36,20 +36,19 @@ cron.schedule('0 * * * *', async () => {
 /**
  * 2. SYNCHRO SANTÉ (08h30)
  */
+
 cron.schedule('30 8 * * *', async () => {
     const userIds = getAllUserIds();
-    console.log(`😴 [Cron] Synchro Santé pour ${userIds.length} utilisateur(s)...`);
+    console.log(`😴 [Cron] Synchro Mantinale pour ${userIds.length} utilisateur(s)...`);
     
     for (const id of userIds) {
         try {
-            await axios.get(`${BASE_URL}/api/sync-health?userId=${id}`);
-            console.log(`✅ Santé OK pour User ${id}`);
+            await axios.post(`${BASE_URL}/api/sync/all`, { userId: id });
         } catch (error) {
-            console.error(`❌ Erreur Santé User ${id}:`, error.message);
+            console.error(`❌ Erreur Maintenance User ${id}:`, error.message);
         }
     }
 }, { timezone: "Europe/Paris" });
-
 /**
  * 3. RAPPORT TELEGRAM (09h05)
  */

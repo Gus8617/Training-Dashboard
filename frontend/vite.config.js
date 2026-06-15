@@ -1,20 +1,26 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+// vite.config.js
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
+    port: 5173,
     proxy: {
-      // Dès que le front appelle quelque chose qui commence par /api
+      // Redirige tous les appels commençant par /api, /auth ou /debug vers Node
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
-      // Dès que le front appelle quelque chose qui commence par /auth
       '/auth': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+      },
+      '/debug': {
         target: 'http://localhost:3000',
         changeOrigin: true,
       }
     }
   }
-})
+});

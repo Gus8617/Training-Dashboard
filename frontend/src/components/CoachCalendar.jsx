@@ -1,236 +1,326 @@
+// src/components/CoachCalendar.jsx
 import React, { useState, useEffect } from 'react';
-import { 
-  Bike, Waves, Zap, Dumbbell, ChevronLeft, ChevronRight, 
-  Plus, X, Calendar as CalendarIcon, Activity as ActivityIcon, Target 
-} from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Heart, Sliders, LayoutGrid } from 'lucide-react';
+import SettingsTabs from './SettingsTabs';
 
-const CoachCalendar = ({ user }) => {
-  const [plans, setPlans] = useState([]);
-  const [activities, setActivities] = useState([]);
+const DAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+
+// Calcule le numéro de semaine ISO de manière fiable
+function getWeekNumber(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+}
+
+// Formate une date en YYYY-MM-DD local sans le biais d'un décalage UTC
+function formatLocalYYYYMMDD(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export default function CoachCalendar() {
+  const [activeTab, setActiveTab] = useState('calendar'); 
+  const [viewMode, setViewMode] = useState('week'); 
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [isModalOpen, setIsModalOpen] = useState(false);
-
-  const SPORT_CONFIG = {
-    run: { color: 'text-orange-500', bg: 'bg-orange-500/10', border: 'border-orange-500/20', icon: <ActivityIcon size={12} /> },
-    ride: { color: 'text-blue-500', bg: 'bg-blue-500/10', border: 'border-blue-500/20', icon: <Bike size={12} /> },
-    swim: { color: 'text-cyan-500', bg: 'bg-cyan-500/10', border: 'border-cyan-500/20', icon: <Waves size={12} /> },
-    yoga: { color: 'text-purple-500', bg: 'bg-purple-500/10', border: 'border-purple-500/20', icon: <Zap size={12} /> },
-    strength: { color: 'text-red-500', bg: 'bg-red-500/10', border: 'border-red-500/20', icon: <Dumbbell size={12} /> },
-    default: { color: 'text-slate-400', bg: 'bg-slate-400/10', border: 'border-slate-400/20', icon: <ActivityIcon size={12} /> }
-  };
-
-  const [newSession, setNewSession] = useState({
-    date: new Date().toISOString().split('T')[0],
-    title: '',
-    type: 'run',
-    planned_tss: 50
+  const [loading, setLoading] = useState(false);
+  const [isRescheduling, setIsRescheduling] = useState(false);
+  const [hoursTarget, setHoursTarget] = useState(8);
+  
+  const [calendarData, setCalendarData] = useState({
+    sessions: [],
+    fitnessDay: { ctl: 0, atl: 0, tsb: 0, readiness_score: 100 }
   });
 
-  useEffect(() => {
-    fetchData();
-  }, [user.userId, currentDate]);
-
-  const fetchData = async () => {
-    try {
-      const [planRes, activityRes] = await Promise.all([
-        fetch(`/api/planning/${user.userId}`),
-        fetch(`/api/activities`)
-      ]);
-      const planData = await planRes.json();
-      const activityData = await activityRes.json();
-      setPlans(planData);
-      setActivities(activityData);
-    } catch (err) {
-      console.error("Erreur chargement données:", err);
+  // Détermine la date de début de la période affichée (Lundi pour la semaine)
+  const getStartDateStr = () => {
+    const d = new Date(currentDate);
+    if (viewMode === 'week') {
+      const day = d.getDay();
+      // Calcule le décalage pour choper le Lundi (1)
+      const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+      return formatLocalYYYYMMDD(new Date(d.setDate(diff)));
+    } else {
+      return formatLocalYYYYMMDD(new Date(d.getFullYear(), d.getMonth(), 1));
     }
   };
 
-  const getDaysInMonth = () => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    const firstDayOfMonth = new Date(year, month, 1);
-    let startDay = firstDayOfMonth.getDay();
-    startDay = startDay === 0 ? 6 : startDay - 1; 
+  const currentWeekNum = getWeekNumber(currentDate);
+  const isCurrentWeekEven = currentWeekNum % 2 === 0;
 
+  const fetchPlan = async () => {
+    setLoading(true);
+    try {
+      const startStr = getStartDateStr();
+      const res = await fetch(`/api/planning?startDate=${startStr}&view=${viewMode}&userId=1`);
+      const data = await res.json();
+      if (data.success) {
+        setCalendarData({
+          sessions: data.days || [],
+          fitnessDay: data.fitness || { ctl: 45.2, atl: 38.0, tsb: 7.2, readiness_score: 85 }
+        });
+      }
+    } catch (err) {
+      console.error("❌ Erreur lors de la récupération du plan:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPlan();
+  }, [currentDate, viewMode]);
+
+  const handleTriggerArbitrage = async () => {
+    if (!window.confirm("Lancer l'analyse et l'adaptation du plan (Arbitrage Garmin/Strava) ?")) return;
+    setIsRescheduling(true);
+    try {
+      const res = await fetch('/api/planning/reschedule', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ userId: 1, weekType: isCurrentWeekEven ? 'even' : 'odd' }) 
+      });
+      const data = await res.json();
+      alert(data.message || `Moteur d'arbitrage exécuté.`);
+      fetchPlan();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsRescheduling(false);
+    }
+  };
+
+  const handleGeneratePlan = async () => {
+    if (!window.confirm(`Écraser et générer un nouveau bloc théorique ?`)) return;
+    setLoading(true);
+    try {
+      const res = await fetch('/api/planning/generate', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ 
+          userId: 1, 
+          targetWeeklyHours: parseFloat(hoursTarget), 
+          startDate: getStartDateStr(), 
+          goalType: 'Triathlon' 
+        } // 80/20 Polarisé par défaut
+        ) 
+      });
+      const data = await res.json();
+      if (data.success) { 
+        alert(data.message); 
+        fetchPlan(); 
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const generateGridDays = () => {
     const days = [];
-    const prevMonthLastDay = new Date(year, month, 0).getDate();
-    for (let i = startDay; i > 0; i--) { 
-        days.push({ day: prevMonthLastDay - i + 1, currentMonth: false, fullDate: "" }); 
-    }
-
-    const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
-    for (let i = 1; i <= lastDayOfMonth; i++) {
-      const dateObj = new Date(year, month, i);
-      const dateStr = new Date(dateObj.getTime() - (dateObj.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
-      days.push({ day: i, currentMonth: true, fullDate: dateStr });
-    }
-
-    const remainingSlots = 42 - days.length;
-    for (let i = 1; i <= remainingSlots; i++) { 
-        days.push({ day: i, currentMonth: false, fullDate: "" }); 
+    const start = new Date(getStartDateStr());
+    const maxDays = viewMode === 'week' ? 7 : new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+    
+    for (let i = 0; i < maxDays; i++) {
+      const d = new Date(start); 
+      d.setDate(start.getDate() + i); 
+      const dateStr = formatLocalYYYYMMDD(d);
+      
+      days.push({ 
+        dateStr, 
+        dayNum: d.getDate(), 
+        dayName: d.toLocaleDateString('fr-FR', { weekday: 'short' }), 
+        sessions: (calendarData.sessions || []).filter(s => s.date === dateStr) 
+      });
     }
     return days;
   };
 
-  const changeMonth = (offset) => {
-    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + offset, 1);
-    setCurrentDate(newDate);
-  };
-
-  const handleAddSession = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await fetch('/api/planning/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newSession, userId: user.userId })
-      });
-      if (response.ok) {
-        setIsModalOpen(false);
-        fetchData();
-      }
-    } catch (err) { console.error(err); }
-  };
-
-  const deleteSession = async (id) => {
-    if (!window.confirm("Supprimer cette séance ?")) return;
-    await fetch(`/api/planning/${id}`, { method: 'DELETE' });
-    fetchData();
-  };
-
-  const daysLabels = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
-  const calendarDays = getDaysInMonth();
+  const todayStr = formatLocalYYYYMMDD(new Date());
 
   return (
-    <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-6">
+    <div className="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased selection:bg-blue-500/30 selection:text-white">
       
-      {/* HEADER NAVIGATION STABILISÉ */}
-      <div className="flex flex-col md:flex-row justify-between items-center bg-slate-900/50 p-6 rounded-[2rem] border border-white/5 gap-4 shadow-2xl backdrop-blur-md">
-        <div className="flex items-center gap-6">
-          <div className="bg-blue-600/20 p-4 rounded-2xl text-blue-500">
-            <CalendarIcon size={28} />
-          </div>
+      {/* HEADER PRINCIPAL */}
+      <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 px-6 py-4 shadow-xl shadow-slate-950/20 backdrop-blur-md bg-opacity-90">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h2 className="text-3xl font-black text-white uppercase tracking-tighter italic leading-none">
-              Planning
-            </h2>
-            <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mt-1">
-              Optimisation de charge
-            </p>
-          </div>
-        </div>
-
-        {/* CONTROLEUR DE DATE FIXE */}
-        <div className="flex items-center bg-slate-950 p-1 rounded-2xl border border-white/5 min-w-[300px] justify-between shadow-inner">
-          <button onClick={() => changeMonth(-1)} className="p-3 hover:bg-slate-800 rounded-xl text-slate-400 hover:text-white transition-all active:scale-90">
-            <ChevronLeft size={20} />
-          </button>
-
-          <div className="flex flex-col items-center px-4">
-            <span className="text-white font-black uppercase text-sm tracking-tighter italic">
-              {currentDate.toLocaleDateString('fr-FR', { month: 'long' })}
-            </span>
-            <span className="text-slate-500 font-bold text-[10px] tabular-nums">
-              {currentDate.getFullYear()}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">Core Architecture v2.0</span>
+            </div>
+            <h1 className="text-lg font-black uppercase tracking-tight text-slate-100 mt-0.5">
+              Coach Engine <span className="text-blue-500">Hybrid</span>
+            </h1>
           </div>
 
-          <button onClick={() => changeMonth(1)} className="p-3 hover:bg-slate-800 rounded-xl text-slate-400 hover:text-white transition-all active:scale-90">
-            <ChevronRight size={20} />
-          </button>
-          
-          <div className="w-[1px] h-8 bg-white/5 mx-1" />
-
-          <button 
-            onClick={() => setCurrentDate(new Date())} 
-            title="Aujourd'hui"
-            className="p-3 hover:bg-blue-600/20 rounded-xl text-blue-500 transition-all active:scale-90"
-          >
-            <Target size={20} />
-          </button>
+          <nav className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 w-full md:w-auto">
+            <button 
+              onClick={() => setActiveTab('calendar')}
+              className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-150 ${activeTab === 'calendar' ? 'bg-blue-600 text-white font-black shadow-md' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              <LayoutGrid size={14} /> Calendrier Planifié
+            </button>
+            <button 
+              onClick={() => setActiveTab('constraints')}
+              className={`flex-1 md:flex-none flex items-center justify-center gap-2 px-5 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-150 ${activeTab === 'constraints' ? 'bg-amber-600 text-slate-950 font-black shadow-md shadow-amber-600/10' : 'text-slate-400 hover:text-slate-200'}`}
+            >
+              <Sliders size={14} /> Réglages & Paramètres
+            </button>
+          </nav>
         </div>
+      </header>
 
-        <button 
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-2xl font-black uppercase text-[11px] tracking-widest transition-all flex items-center gap-2 shadow-lg shadow-blue-600/30 active:scale-95 whitespace-nowrap"
-        >
-          <Plus size={18} /> Séance
-        </button>
-      </div>
+      <main className="max-w-7xl mx-auto px-6 py-8">
+        {activeTab === 'calendar' ? (
+          <div className="space-y-6">
+            
+            {/* CONTROLLER DU GÉNÉRATEUR THÉORIQUE */}
+            <div className="bg-gradient-to-r from-slate-900 to-slate-900/40 border border-slate-800 p-5 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-wider text-blue-400">Générateur Algorithmique Polarisé</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">Calcule et injecte un bloc structurel 80% LIT / 20% HIT sur la base des dispo rituelles.</p>
+              </div>
+              <div className="flex items-center gap-2 w-full sm:w-auto justify-end bg-slate-950/60 p-1.5 border border-slate-800 rounded-xl">
+                <input 
+                  type="number" 
+                  value={hoursTarget} 
+                  onChange={(e) => setHoursTarget(e.target.value)}
+                  className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-center w-14 text-blue-400 font-bold focus:outline-none focus:border-blue-500"
+                />
+                <span className="text-[11px] text-slate-400 font-medium pr-2">h / sem</span>
+                <button onClick={handleGeneratePlan} className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-lg transition-all">
+                  Générer le Bloc
+                </button>
+              </div>
+            </div>
 
-      {/* GRILLE */}
-      <div className="bg-slate-900/30 border border-white/5 rounded-[2.5rem] overflow-hidden backdrop-blur-xl shadow-2xl">
-        <div className="grid grid-cols-7 border-b border-white/5 bg-slate-900/80">
-          {daysLabels.map(label => (
-            <div key={label} className="py-4 text-center text-[10px] font-black text-slate-500 uppercase tracking-widest">{label}</div>
-          ))}
-        </div>
-
-        <div className="grid grid-cols-7">
-          {calendarDays.map((dateObj, idx) => {
-            const dayPlans = plans.filter(p => p.date === dateObj.fullDate);
-            const dayActivities = activities.filter(a => a.date.split('T')[0] === dateObj.fullDate);
-            const isToday = dateObj.fullDate === new Date().toISOString().split('T')[0];
-
-            return (
-              <div key={idx} className={`min-h-[160px] border-r border-b border-white/5 p-2 transition-all 
-                ${!dateObj.currentMonth ? 'opacity-5 bg-transparent' : 'hover:bg-white/[0.01]'} 
-                ${(idx + 1) % 7 === 0 ? 'border-r-0' : ''}`}>
-                
-                <div className="flex justify-between items-center mb-2">
-                  <span className={`text-[10px] font-black ${isToday ? 'bg-blue-600 text-white w-6 h-6 flex items-center justify-center rounded-lg shadow-lg' : 'text-slate-500'}`}>
-                    {dateObj.day}
-                  </span>
-                </div>
-
-                <div className="space-y-1.5">
-                  {dayActivities.map(act => {
-                    const type = act.type?.toLowerCase().includes('run') ? 'run' : 
-                                 act.type?.toLowerCase().includes('ride') || act.type?.toLowerCase().includes('cycling') ? 'ride' :
-                                 act.type?.toLowerCase().includes('swim') ? 'swim' : 'default';
-                    const config = SPORT_CONFIG[type] || SPORT_CONFIG.default;
-                    return (
-                      <div key={act.id} className={`${config.bg} ${config.border} border p-1.5 rounded-lg border-l-2`}>
-                        <div className="flex items-center justify-between">
-                          <div className={`flex items-center gap-1 ${config.color}`}>{config.icon}</div>
-                          <span className="text-[7px] font-black text-white/40">{(act.distance / 1000).toFixed(1)}k</span>
-                        </div>
-                        <p className="text-white text-[8px] font-bold truncate uppercase mt-0.5">{act.name}</p>
-                      </div>
-                    );
-                  })}
-
-                  {dayPlans.map(s => {
-                    const type = s.type?.toLowerCase() || 'default';
-                    const config = SPORT_CONFIG[type] || SPORT_CONFIG.default;
-                    return (
-                      <div key={s.id} className="group relative bg-slate-800/40 border border-white/10 p-1.5 rounded-lg border-dashed">
-                        <button onClick={() => deleteSession(s.id)} className="absolute -top-1 -right-1 bg-red-500 text-white p-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10"><X size={10} /></button>
-                        <div className="flex items-center gap-1">
-                           <div className={config.color}>{config.icon}</div>
-                           <span className={`text-[7px] font-black uppercase tracking-tighter ${config.color}`}>{s.type}</span>
-                        </div>
-                        <p className="text-slate-200 text-[8px] font-bold truncate uppercase italic opacity-70">{s.title}</p>
-                      </div>
-                    );
-                  })}
+            {/* MONITEUR DE CHARGE BANISTER / COGGAN */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl shadow-sm">
+                <div className="text-[9px] font-black tracking-widest text-slate-500 uppercase">Fitness Planifié (CTL)</div>
+                <div className="text-2xl font-black text-blue-400 mt-1">{calendarData.fitnessDay.ctl.toFixed(1)}</div>
+                <div className="w-full bg-slate-800 h-1 rounded-full mt-2 overflow-hidden">
+                  <div className="bg-blue-400 h-full" style={{ width: `${Math.min(calendarData.fitnessDay.ctl, 100)}%` }}></div>
                 </div>
               </div>
-            );
-          })}
-        </div>
-      </div>
 
-      {/* LOGIQUE DE PLANIFICATION : Suggestion */}
-      <div className="bg-blue-600/10 border border-blue-500/20 p-6 rounded-3xl">
-        <h4 className="text-white font-black uppercase text-xs tracking-widest mb-2 italic">Analyse du bloc actuel</h4>
-        <p className="text-slate-400 text-sm leading-relaxed">
-          Le mois de <span className="text-blue-400 font-bold capitalize">{currentDate.toLocaleDateString('fr-FR', { month: 'long' })}</span> comporte {plans.length} séances planifiées. 
-          Pour un entraînement optimal, essayez de maintenir une alternance entre séances intenses (TSS élevé) et récupération.
-        </p>
-      </div>
+              <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl shadow-sm">
+                <div className="text-[9px] font-black tracking-widest text-slate-500 uppercase">Fatigue Courante (ATL)</div>
+                <div className="text-2xl font-black text-amber-500 mt-1">{calendarData.fitnessDay.atl.toFixed(1)}</div>
+                <div className="w-full bg-slate-800 h-1 rounded-full mt-2 overflow-hidden">
+                  <div className="bg-amber-400 h-full" style={{ width: `${Math.min(calendarData.fitnessDay.atl, 100)}%` }}></div>
+                </div>
+              </div>
+
+              <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-xl shadow-sm">
+                <div className="text-[9px] font-black tracking-widest text-slate-500 uppercase">Fraîcheur Nette (TSB)</div>
+                <div className={`text-2xl font-black mt-1 ${calendarData.fitnessDay.tsb >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                  {calendarData.fitnessDay.tsb.toFixed(1)}
+                </div>
+                <div className="text-[9px] text-slate-500 mt-2 font-medium">
+                  {calendarData.fitnessDay.tsb < -10 ? 'Zone de Surcharge' : calendarData.fitnessDay.tsb > 5 ? 'Zone d\'Affûtage' : 'Zone d\'Assimilation'}
+                </div>
+              </div>
+
+              <div className="bg-slate-900 border border-amber-900/20 bg-gradient-to-b from-slate-900 to-amber-950/10 p-4 rounded-xl flex flex-col justify-between shadow-md">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-1.5">
+                  <div className="text-[9px] font-black tracking-widest text-amber-400 uppercase">Moteur Adaptatif (S.{currentWeekNum})</div>
+                  <Heart size={12} className="text-amber-500 " />
+                </div>
+                <button 
+                  onClick={handleTriggerArbitrage} 
+                  disabled={isRescheduling} 
+                  className="w-full mt-3 bg-slate-950 border border-slate-800 hover:border-amber-500/40 text-[9px] text-slate-200 py-2.5 rounded-lg font-black tracking-wider uppercase transition-all disabled:opacity-50"
+                >
+                  {isRescheduling ? 'Calcul Arbitrage...' : 'Vérifier Santé Garmin / Adapter'}
+                </button>
+              </div>
+            </div>
+
+            {/* BARRE INTERNE DE LA GRILLE CALENDRIER */}
+            <div className="flex justify-between items-center pt-2">
+              <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
+                Planification Courante <span className="text-[10px] text-slate-500 ml-1">(Semaine {currentWeekNum} - {isCurrentWeekEven ? 'Paire' : 'Impaire'})</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-1 rounded-lg text-xs font-mono">
+                  <button onClick={() => { const nd = new Date(currentDate); viewMode === 'week' ? nd.setDate(nd.getDate() - 7) : nd.setMonth(nd.getMonth() - 1); setCurrentDate(nd); }} className="p-1 hover:text-white text-slate-500"><ChevronLeft size={14}/></button>
+                  <span className="px-2 text-[10px] uppercase font-bold tracking-tight text-slate-300">{viewMode === 'week' ? `Sem. ${currentWeekNum}` : currentDate.toLocaleDateString('fr-FR', {month: 'short', year: 'numeric'})}</span>
+                  <button onClick={() => { const nd = new Date(currentDate); viewMode === 'week' ? nd.setDate(nd.getDate() + 7) : nd.setMonth(nd.getMonth() + 1); setCurrentDate(nd); }} className="p-1 hover:text-white text-slate-500"><ChevronRight size={14}/></button>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-1 rounded-lg flex gap-1">
+                  <button onClick={() => setViewMode('week')} className={`px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all ${viewMode === 'week' ? 'bg-slate-800 text-white' : 'text-slate-500'}`}>Sem</button>
+                  <button onClick={() => setViewMode('month')} className={`px-2.5 py-1 rounded text-[9px] font-black uppercase tracking-wider transition-all ${viewMode === 'month' ? 'bg-slate-800 text-white' : 'text-slate-500'}`}>Mois</button>
+                </div>
+              </div>
+            </div>
+
+            {/* GRILLE DU CALENDRIER */}
+            {loading ? (
+              <div className="h-64 flex items-center justify-center text-slate-600 text-xs tracking-widest uppercase font-mono animate-pulse">Sync SQLite Kernel...</div>
+            ) : (
+              <div className={`grid gap-3.5 ${viewMode === 'week' ? 'grid-cols-1 md:grid-cols-7' : 'grid-cols-2 sm:grid-cols-4 md:grid-cols-7'}`}>
+                {generateGridDays().map(day => {
+                  const isToday = day.dateStr === todayStr;
+                  return (
+                    <div key={day.dateStr} className={`min-h-[170px] p-3 rounded-xl border flex flex-col justify-between transition-all ${isToday ? 'bg-slate-900 border-blue-500/50 shadow-lg shadow-blue-500/5' : 'bg-slate-900/30 border-slate-800/80 hover:border-slate-800'}`}>
+                      <div className="flex justify-between items-baseline border-b border-slate-800/60 pb-1.5 mb-2">
+                        <span className={`text-[10px] font-black uppercase ${isToday ? 'text-blue-400' : 'text-slate-400'}`}>{day.dayName} {day.dayNum}</span>
+                        <span className="text-[8px] text-slate-600 font-mono font-bold uppercase">{day.sessions.length} sél</span>
+                      </div>
+
+                      <div className="space-y-1.5 flex-1 flex flex-col justify-start">
+                        {day.sessions.length === 0 ? (
+                          <div className="text-[9px] text-slate-600 italic font-medium mt-1">Assimilation / Repos</div>
+                        ) : (
+                          day.sessions.map(session => {
+                            let zoneBadge = "border-slate-800 bg-slate-900/60 text-slate-300";
+                            if (session.target_intensity_zone === 'LIT') zoneBadge = "border-emerald-500/20 bg-emerald-500/5 text-emerald-400";
+                            if (session.target_intensity_zone === 'MIT') zoneBadge = "border-amber-500/20 bg-amber-500/5 text-amber-400";
+                            if (session.target_intensity_zone === 'HIT') zoneBadge = "border-rose-500/20 bg-rose-500/5 text-rose-400";
+
+                            return (
+                              <div key={session.id} className={`p-2 rounded-lg border text-[10px] transition-transform duration-100 hover:scale-[1.01] ${zoneBadge}`}>
+                                <div className="flex justify-between items-start gap-1">
+                                  <span className="font-bold tracking-tight line-clamp-1">{session.title}</span>
+                                  <span className="text-[8px] font-mono font-black px-1 bg-slate-950/40 rounded uppercase shrink-0 text-slate-400">{session.type}</span>
+                                </div>
+                                {viewMode === 'week' && session.description && (
+                                  <p className="text-[9px] text-slate-400 line-clamp-2 mt-0.5 leading-tight font-medium">{session.description}</p>
+                                )}
+                                <div className="flex justify-between items-center mt-2 pt-1 border-t border-slate-800/20 text-[8px] text-slate-500 font-mono font-bold">
+                                  <span>{session.target_load || 0} TSS</span>
+                                  <div>
+                                    {session.status === 'completed' && <CheckCircle2 size={10} className="text-emerald-400" />}
+                                    {session.status === 'skipped' && <XCircle size={10} className="text-rose-500" />}
+                                    {session.status === 'planned' && <div className="w-1 h-1 rounded-full bg-blue-400"></div>}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          <SettingsTabs 
+            userId={1} 
+            currentWeekStartDate={getStartDateStr()} 
+            isCurrentWeekEven={isCurrentWeekEven} 
+            DAYS={DAYS}
+          />
+        )}
+      </main>
     </div>
   );
-};
-
-export default CoachCalendar;
+}

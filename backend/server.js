@@ -42,6 +42,7 @@ app.use(cors({
 require('./cron');
 
 // 5. ROUTES API
+
 const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const devRoutes = require('./routes/dev');
@@ -49,11 +50,17 @@ const planningRoutes = require('./routes/planning');
 const { syncAll } = require('./services/strava.service');
 const { sendTelegramMessage, generateDailyReport } = require('./services/telegram.service');
 const { syncGarminHealth } = require('./services/garmin.service');
+const constraintsRouter = require('./routes/constraints');
+const recurringSessionsRouter = require('./routes/recurringSessions');
+
+
+app.use('/api/planning', planningRoutes);
+app.use('/api/constraints', constraintsRouter);
+app.use('/api/recurring-sessions', recurringSessionsRouter);
 
 app.use('/auth', authRoutes);
 app.use('/api', dataRoutes);
 app.use('/debug', devRoutes);
-app.use('/api/planning', planningRoutes);
 
 // --- ROUTE SYNCHRO STRAVA (Unique et propre) ---
 app.get('/api/sync-strava', async (req, res) => {
@@ -156,7 +163,11 @@ app.use(['/api', '/auth'], (req, res) => {
 });
 
 // 8. CATCH-ALL REACT
-app.get(/^(?!\/auth|\/api).*$/, (req, res) => {
+/*app.get(/^(?!\/auth|\/api).*$/, (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+});*/
+
+app.get(/^(?!\/auth|\/api|\/debug).*$/, (req, res) => {
     res.sendFile(path.join(distPath, 'index.html'));
 });
 

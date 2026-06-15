@@ -5,6 +5,10 @@ const { syncAll } = require('../services/strava.service');
 const { syncGarminHealth } = require('../services/garmin.service');
 const { computeFitness } = require('../services/fitness.service');
 
+// =========================================================================
+// 📑 CORE MONITORING & SYNCHRONISATION
+// =========================================================================
+
 router.get('/status', (req, res) => {
     const counts = {
         activities: db.prepare("SELECT COUNT(*) as count FROM activities").get().count,
@@ -36,14 +40,8 @@ router.post('/sync/all', async (req, res) => {
 
   try {
       console.log(`🚀 Lancement de la synchro complète pour l'user ${userId}`);
-
-      // 1. On synchronise les activités Strava
       const stravaResult = await syncAll(userId);
-      
-      // 2. On synchronise la santé Garmin
       const garminResult = await syncGarminHealth(userId);
-
-      // 3. Calcul des metriques fitness
       const calcResult = await computeFitness(userId);
 
       res.json({ 
@@ -55,10 +53,7 @@ router.post('/sync/all', async (req, res) => {
       });
   } catch (err) {
       console.error("🔥 Erreur synchro globale:", err);
-      res.status(500).json({ 
-          success: false, 
-          error: "Erreur lors de la synchronisation globale" 
-      });
+      res.status(500).json({ success: false, error: "Erreur lors de la synchronisation globale" });
   }
 });
 
@@ -84,6 +79,162 @@ router.get('/stats/annual', (req, res) => {
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
-  });
+});
+
+// =========================================================================
+// 🔓 GESTION DES CONTRAINTES & DISPONIBILITÉS (`user_constraints`)
+// =========================================================================
+
+// 1. OBTENIR LES CONTRAINTES (Filtrées par parité de semaine 'even' ou 'odd')
+router.get('/constraints/:userId', (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { weekType } = req.query; // 'even' ou 'odd' envoyé par le front
+
+        let constraints;
+        if (weekType) {
+            // Récupère les règles spécifiques à une date OU les récurrentes qui matchent la parité (ou 'all')
+            // Note: On supprime le filtre "is_blocked = 0" pour afficher aussi bien les créneaux Ouverts que les Verrous (Locks)
+            constraints = db.prepare(`
+                SELECT *, rowid as slot_id FROM user_constraints 
+                WHERE user_id = ? 
+                AND (specific_date IS NOT NULL OR week_alternation = 'all' OR week_alternation = ?)
+                ORDER BY specific_date ASC, day_of_week ASC, start_time ASC
+            `).all(userId, weekType);
+        } else {
+            constraints = db.prepare(`
+                SELECT *, rowid as slot_id FROM user_constraints 
+                WHERE user_id = ?
+                ORDER BY day_of_week ASC, start_time ASC
+            `).all(userId);
+        }
+
+        res.json({ success: true, constraints });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 2. ENREGISTREMENT BATCH (Gère la récurrence, les dates fixes et l'alternance)
+router.post('/constraints/save-batch', (req, res) => {
+    try {
+        const { user_id, days, start_time, end_time, specific_date, is_blocked, week_alternation } = req.body;
+
+        // Nettoyage ou remplacement pour éviter les doublons stricts sur la même clé naturelle
+        const deleteExistingStmt = db.prepare(`
+            DELETE FROM user_constraints 
+            WHERE user_id = ? AND day_of_week = ? AND (specific_date = ? OR (specific_date IS NULL AND ? IS NULL)) AND start_time = ? AND week_alternation = ?
+        `);
+        
+        const insertStmt = db.prepare(`
+            INSERT INTO user_constraints (user_id, day_of_week, specific_date, start_time, end_time, is_blocked, week_alternation)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const runBatch = db.transaction((userId, targetDays, targetDate, start, end, blocked, alternation) => {
+            if (targetDate) {
+                // Mode Date Unique
+                const d = new Date(targetDate);
+                const dayOfWeek = d.getDay(); 
+                deleteExistingStmt.run(userId, dayOfWeek, targetDate, targetDate, start, 'all');
+                insertStmt.run(userId, dayOfWeek, targetDate, start, end, blocked, 'all');
+            } else {
+                // Mode Récurrent
+                for (const day of targetDays) {
+                    deleteExistingStmt.run(userId, day, null, null, start, alternation);
+                    insertStmt.run(userId, day, null, start, end, blocked, alternation);
+                }
+            }
+        });
+
+        runBatch(user_id, days, specific_date || null, start_time, end_time, is_blocked || 0, week_alternation || 'all');
+        res.json({ success: true, message: "Règles d'arbitrage enregistrées avec succès." });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 3. SUPPRESSION D'UN CRÉNEAU
+router.delete('/constraints/delete', (req, res) => {
+    try {
+        const { user_id, day_of_week, specific_date, start_time, week_alternation } = req.body;
+
+        const stmt = db.prepare(`
+            DELETE FROM user_constraints 
+            WHERE user_id = ? 
+            AND day_of_week = ? 
+            AND (specific_date = ? OR (specific_date IS NULL AND ? IS NULL)) 
+            AND start_time = ?
+            AND week_alternation = ?
+        `);
+        
+        const info = stmt.run(user_id, day_of_week, specific_date || null, specific_date || null, start_time, week_alternation || 'all');
+
+        if (info.changes > 0) {
+            res.json({ success: true, message: "Créneau supprimé." });
+        } else {
+            res.status(404).json({ success: false, error: "Créneau introuvable." });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// =========================================================================
+// 🏊 GESTION DES ENTRAÎNEMENTS FIXES RITUELS (`recurring_sessions`)
+// =========================================================================
+
+// 1. RÉCUPÉRER TOUS LES RITUELS D'UN UTILISATEUR
+router.get('/recurring-sessions/:userId', (req, res) => {
+    try {
+        const { userId } = req.params;
+        const sessions = db.prepare(`
+            SELECT *, id as session_id FROM recurring_sessions 
+            WHERE user_id = ? 
+            ORDER BY day_of_week ASC, start_time ASC
+        `).all(userId);
+        
+        res.json({ success: true, sessions });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 2. AJOUTER / METTRE À JOUR UN RITUEL
+router.post('/recurring-sessions/save', (req, res) => {
+    try {
+        const { 
+            user_id, day_of_week, week_alternation, title, 
+            type, target_intensity_zone, duration_minutes, target_load, start_time, description 
+        } = req.body;
+
+        const stmt = db.prepare(`
+            INSERT INTO recurring_sessions 
+            (user_id, day_of_week, week_alternation, title, type, target_intensity_zone, duration_minutes, target_load, start_time, description)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        stmt.run(user_id, day_of_week, week_alternation || 'all', title, type, target_intensity_zone, duration_minutes || 0, target_load || 0, start_time, description || null);
+        res.json({ success: true, message: "Session rituelle enregistrée." });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// 3. SUPPRIMER UN RITUEL VIA SON ID
+router.delete('/recurring-sessions/delete/:id', (req, res) => {
+    try {
+        const { id } = req.params;
+        const info = db.prepare(`DELETE FROM recurring_sessions WHERE id = ?`).run(id);
+
+        if (info.changes > 0) {
+            res.json({ success: true, message: "Session rituelle supprimée." });
+        } else {
+            res.status(404).json({ success: false, error: "Session rituelle introuvable." });
+        }
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 module.exports = router;

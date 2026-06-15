@@ -26,6 +26,12 @@ const generateDailyReport = (user, fitness, health) => {
     const tsbStatus = today.tsb > 5 ? "🟢 Frais" : today.tsb < -10 ? "🔴 Fatigué" : "🟡 Optimal";
     const hrvStatus = lastHealth.hrv > 60 ? "🚀 Excellente" : "📉 Basse"; // Adapte selon tes moyennes
 
+    // GESTION DU READINESS SCORE (Couleur dynamique)
+    let readinessEmoji = "⚪";
+    if (today.readiness_score >= 80) readinessEmoji = "🟢";
+    else if (today.readiness_score >= 50) readinessEmoji = "🟡";
+    else if (today.readiness_score > 0) readinessEmoji = "🔴";
+
     return `
 *📊 BILAN MATINAL - ${user.firstname}*
 ---------------------------
@@ -33,6 +39,7 @@ const generateDailyReport = (user, fitness, health) => {
 • *Fitness (CTL) :* ${Math.round(today.ctl)}
 • *Fatigue (ATL) :* ${Math.round(today.atl)}
 • *Forme (TSB) :* ${Math.round(today.tsb)} (${tsbStatus})
+• *Readiness :* ${readinessEmoji} ${today.readiness_score || 'N/A'}/100 
 
 *💤 RÉCUPÉRATION*
 • *Sommeil :* ${Math.floor(lastHealth.duration / 60)}h${lastHealth.duration % 60}m
@@ -81,6 +88,8 @@ const formatActivityMessage = (activity) => {
         performanceStr = `🚲 Vitesse : ${speed} km/h`;
     }
 
+    const effortScore = activity.custom_score || activity.suffer_score || 0;
+
     // 4. ZONES CARDIAQUES AVEC COULEURS DASHBOARD
     const zoneColors = {
         0: '⚪', // Zone 1 - Récupération / Gris-Blanc
@@ -116,6 +125,7 @@ const formatActivityMessage = (activity) => {
 ⏱️ Temps : ${durationMin} min ${durationSec < 10 ? '0' : ''}${durationSec} sec
 ${performanceStr}
 ❤️ FC Moy : ${activity.average_hr || '?'} bpm
+🔥 Effort : ${Math.round(effortScore)}
 🏔️ D+ : ${Math.round(activity.total_elevation_gain)} m
 
 📊 *Temps dans les zones FC :*
