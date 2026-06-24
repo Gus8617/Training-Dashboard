@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import MetricCard from './MetricCard';
-import PerformanceCharts from './PerformanceCharts';
-import ActivityTable from './ActivityTable';
-import RecoveryAdvisor from './RecoveryAdvisor';
-import HealthMetricsCharts from './HealthMetricsCharts';
-import HealthTable from './HealthTable';
-import YearlyRecap from './YearlyRecap';
-import HeartRateZonesChart from './HeartRateZonesChart';
-import MethodologyCard from './MethodologyCard';
+import MetricCard from '../ui/MetricCard';
+import PerformanceCharts from '../dashboard/PerformanceCharts';
+import ActivityTable from '../dashboard/ActivityTable';
+import RecoveryAdvisor from '../dashboard/RecoveryAdvisor';
+import HealthMetricsCharts from '../health/HealthMetricsCharts';
+import HealthTable from '../health/HealthTable';
+import YearlyRecap from '../dashboard/YearlyRecap';
+import HeartRateZonesChart from '../health/HeartRateZonesChart';
+import MethodologyCard from '../ui/MethodologyCard';
 import { Activity } from 'lucide-react';
+import CoachCalendar from '../calendar/CoachCalendar';
 
 const API_BASE = "/api";
 
@@ -36,39 +37,59 @@ export default function Dashboard({ user, onLogout }) {
       console.error("Erreur de chargement local:", err); 
     }
   };
-
+  
   useEffect(() => {
-    // ÉTAPE 1 : Affichage immédiat des données du Pi
+    // ÉTAPE 1 : Affichage immédiat des données locales (SQLite du Pi)
     loadData();
-
-    // ÉTAPE 2 : Synchro automatique silencieuse
+  
+    // ÉTAPE 2 : Synchro automatique intelligente globale
     const autoSync = async () => {
-      setLoading(true); // Petit indicateur (le point qui clignote)
+      // On s'assure d'avoir l'utilisateur avant de lancer la synchro
+      if (!user?.userId) {
+        console.warn("⚠️ Synchro auto impossible : userId manquant.");
+        return;
+      }
+  
+      setLoading(true); // Petit indicateur (ex: le point qui clignote)
       try {
-        // On utilise l'endpoint intelligent qui ne récupère que le delta
-        const res = await axios.get(`${API_BASE}/sync-strava`);
-        console.log("🔄 Synchro Strava terminée", res.data);
+        // 💡 On passe sur le POST /sync/all global avec le userId
+        const res = await axios.post(`${API_BASE}/sync/all`, { userId: user.userId });
+        console.log("🔄 Synchro globale auto terminée", res.data);
         
-        // On recharge les données systématiquement pour recalculer 
-        // les métriques de forme (TSB/CTL) qui changent chaque jour
+        // On recharge les données pour mettre à jour le graphique de Fitness (daily_fitness)
         await loadData();
       } catch (err) {
-        console.error("Erreur synchro auto:", err);
+        console.error("❌ Erreur lors de la synchro auto globale:", err.response?.data || err.message);
       } finally {
         setLoading(false);
       }
     };
-
-    autoSync();
-  }, []);
+  
+    // On ne lance l'autoSync que si l'objet user est bien présent et chargé
+    if (user) {
+      autoSync();
+    }
+  }, [user]); // 💡 Ajout de [user] en dépendance pour être sûr d'avoir l'ID disponible au chargement
 
   // Ton bouton manuel au cas où
   const handleSync = async () => {
+    // Optionnel : Sécurité si l'objet user ou userId n'est pas encore chargé
+    if (!user?.userId) {
+      console.warn("⚠️ Impossible de synchroniser : userId introuvable.");
+      return;
+    }
+  
     setLoading(true);
     try { 
-      await axios.post(`${API_BASE}/sync/all`); 
+      // 💡 On passe l'objet { userId } en deuxième argument d'axios.post
+      await axios.post(`${API_BASE}/sync/all`, { userId: user.userId }); 
+      
       await loadData(); 
-    } finally { setLoading(false); }
+    } catch (err) {
+      console.error("❌ Erreur lors de la synchro du Dashboard:", err.response?.data || err.message);
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   // --- LOGIQUE DE CALCUL DES MÉTRIQUES ---
@@ -111,6 +132,7 @@ export default function Dashboard({ user, onLogout }) {
             <Activity size={16} className={loading ? 'animate-spin' : ''} />
           </button>
         </div>
+        <CoachCalendar userId={user?.id} />
 
         {/* ... (Reste du rendu identique) */}
         <div className="md:col-span-1">

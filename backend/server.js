@@ -47,13 +47,14 @@ const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const devRoutes = require('./routes/dev');
 const planningRoutes = require('./routes/planning');
+const programRoutes = require('./routes/program');
 const { syncAll } = require('./services/strava.service');
 const { sendTelegramMessage, generateDailyReport } = require('./services/telegram.service');
 const { syncGarminHealth } = require('./services/garmin.service');
 const constraintsRouter = require('./routes/constraints');
 const recurringSessionsRouter = require('./routes/recurringSessions');
 
-
+app.use('/api/program', programRoutes);
 app.use('/api/planning', planningRoutes);
 app.use('/api/constraints', constraintsRouter);
 app.use('/api/recurring-sessions', recurringSessionsRouter);

@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import LoginPage from './components/LoginPage';
-import Dashboard from './components/Dashboard';
-import Connections from './components/Connections'; 
-import CoachCalendar from './components/CoachCalendar'; 
-import Navbar from './components/Navbar';
-import Callback from './components/Callback';
+import LoginPage from './components/auth/LoginPage';
+import Dashboard from './components/dashboard/Dashboard';
+import Connections from './components/settings/Connections'; 
+import CoachWorkspace from './components/coach/CoachWorkspace';
+import Navbar from './components/ui/Navbar';
+import Callback from './components/auth/Callback';
 
 // --- PLUS BESOIN DE CONFIGURER L'URL ICI ---
 // En laissant une chaîne vide, le navigateur utilise l'hôte actuel.
@@ -67,7 +67,7 @@ function App() {
           <Routes>
             <Route path="/" element={!user ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/dashboard" />} />
             <Route path="/dashboard" element={user ? <Dashboard user={user} /> : <Navigate to="/" />} />
-            <Route path="/coach" element={user ? <CoachCalendar user={user} /> : <Navigate to="/" />} />
+            <Route path="/coach" element={user ? <CoachWorkspace user={user} /> : <Navigate to="/" />} />
             <Route path="/connections" element={user ? <Connections user={user} /> : <Navigate to="/" />} />
             <Route path="/callback" element={<Callback user={user} />} />
             <Route path="*" element={<Navigate to="/dashboard" />} />

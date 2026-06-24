@@ -44,13 +44,17 @@ async function getStravaAccessToken(user) {
  */
 function calculateCustomScore(distributionBuckets) {
     if (!distributionBuckets || distributionBuckets.length === 0) return 0;
-    const weights = [1.0, 1.2, 2.2, 4.5, 9.0]; // Z1 à Z5
+    
+    // Z1 (Récup), Z2 (Endurance), Z3 (Tempo), Z4 (Seuil), Z5 (PMA+)
+    // 1h à 100% du seuil (Z4) doit donner environ 100 points. 100 / 60 min = ~1.65
+    const weights = [0.5, 1.0, 1.4, 1.7, 3.2]; 
     
     const score = distributionBuckets.reduce((total, bucket, index) => {
         const minutes = (bucket.time || 0) / 60;
-        const weight = weights[index] || 1.0;
+        const weight = weights[index] || 0.5;
         return total + (minutes * weight);
     }, 0);
+    
     return parseFloat(score.toFixed(2));
 }
 

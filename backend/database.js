@@ -78,18 +78,18 @@ db.exec(`
   );
 `);
 
-// 5. Table des séances planifiées (Version Améliorée pour Visuel Hebdo)
+// 📅 5. Table des séances planifiées (Schéma fusionné et indexé)
 db.exec(`
   CREATE TABLE IF NOT EXISTS training_plan (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     date TEXT NOT NULL,                     -- YYYY-MM-DD
-    start_time TEXT,                        -- AJOUT : ex: "12:00" (crucial pour caler la séance dans ton open slot)
-    title TEXT,                             -- ex: "PMA Développement" ou "Natation Club"
+    start_time TEXT,                        -- ex: "12:00"
+    title TEXT,                             -- ex: "PMA Développement"
     description TEXT,                       -- Détails des blocs
     type TEXT,                              -- 'Run', 'Ride', 'Swim', 'Strength'
     
-    -- Objectifs théoriques (Target) -> TOUT EN SECONDES
+    -- Objectifs théoriques (Target) -> TOUT EN SECONDES OU UNITÉS PURES
     target_duration INTEGER,                -- Durée prévue en SECONDES (ex: 3600 pour 1h)
     target_distance REAL,                   -- Distance prévue en km
     target_load INTEGER,                    -- Charge théorique (TSS attendu)
@@ -98,12 +98,16 @@ db.exec(`
     -- Suivi & Réalité
     status TEXT DEFAULT 'planned',          -- 'planned', 'completed', 'skipped', 'mutated'
     strava_id TEXT UNIQUE,                  -- Clé de liaison vers l'activité réelle
-    recurring_session_id INTEGER,           -- AJOUT : Lie la séance à un rituel fixe (NULL si généré par l'algo)
+    recurring_session_id INTEGER,           -- Lie la séance à un rituel fixe (NULL si algo)
     
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (strava_id) REFERENCES activities(id),
-    FOREIGN KEY (recurring_session_id) REFERENCES recurring_sessions(id) -- Sécurité d'intégrité
+    FOREIGN KEY (recurring_session_id) REFERENCES recurring_sessions(id) ON DELETE SET NULL
   );
+
+  -- 🎯 Index composite crucial pour la vélocité des requêtes par plages du calendrier (Semaine / Mois)
+  CREATE INDEX IF NOT EXISTS idx_training_plan_user_date 
+  ON training_plan (user_id, date);
 `);
 
 //db.exec(`DROP TABLE IF EXISTS user_constraints;`);

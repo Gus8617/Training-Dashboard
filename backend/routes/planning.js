@@ -1,4 +1,3 @@
-// routes/planning.js
 const express = require('express');
 const router = express.Router();
 const db = require('../database');
@@ -20,62 +19,165 @@ function formatLocalYYYYMMDD(date) {
     return `${year}-${month}-${day}`;
 }
 
+// Fonction utilitaire pour matcher les types de sport de manière générique
+const isSportMatch = (typeA, typeB) => {
+    const a = typeA?.toLowerCase();
+    const b = typeB?.toLowerCase();
+    if ((a === 'ride' || a === 'bike') && (b === 'ride' || b === 'bike')) return true;
+    return a === b;
+};
+
 // =========================================================================
-// 📅 1. GET /api/planning (REQUIS PAR LE CALENDRIER FRONTEND)
+// 📅 1. GET /api/planning (CORRIGÉ : CORRÉLATION FLEXIBLE ET SÉCURISÉE)
 // =========================================================================
 router.get('/', (req, res) => {
     try {
         const { startDate, view, userId } = req.query;
         
-        if (!userId || !startDate) {
-            return res.status(400).json({ success: false, error: "Paramètres manquants (userId ou startDate)." });
+        if (!userId || !startDate || typeof startDate !== 'string') {
+            return res.status(400).json({ success: false, error: "Paramètres manquants ou invalides (userId ou startDate)." });
         }
 
-        let sessions = [];
-        // On convertit target_duration (secondes) en duration_minutes pour le Front
+        const numericUserId = parseInt(userId, 10);
+        const start = new Date(startDate);
+        if (isNaN(start.getTime())) {
+            return res.status(400).json({ success: false, error: "Le format de la date est invalide." });
+        }
+
+        const end = new Date(start);
+        let startDateStr = startDate;
+
+        if (view === 'week') {
+            end.setDate(start.getDate() + 7);
+            startDateStr = formatLocalYYYYMMDD(start);
+        } else {
+            start.setDate(1); 
+            end.setMonth(start.getMonth() + 1);
+            end.setDate(1);
+            startDateStr = formatLocalYYYYMMDD(start);
+        }
+
+        const endDateStr = formatLocalYYYYMMDD(end);
+
+        // 1. Récupération du plan théorique sur la plage sélectionnée
         const selectFields = `
             id, date, start_time, title, description, type, 
             (target_duration / 60) AS duration_minutes, 
-            target_distance, target_load, target_intensity_zone, status, strava_id
+            target_duration, target_distance, target_load, target_intensity_zone, status, strava_id
         `;
+        const plannedSessions = db.prepare(`
+            SELECT ${selectFields}
+            FROM training_plan 
+            WHERE user_id = ? AND date >= ? AND date < ? AND status = 'planned'
+            ORDER BY date ASC, start_time ASC
+        `).all(numericUserId, startDateStr, endDateStr);
 
-        if (view === 'week') {
-            const start = new Date(startDate);
-            const end = new Date(start);
-            end.setDate(start.getDate() + 7);
-            const endDate = formatLocalYYYYMMDD(end);
+        // 2. Récupération des activités réelles Strava (Nettoyage strict pour éviter les fuites d'historique)
+        const realActivities = db.prepare(`
+            SELECT id, name, type, 
+                   SUBSTR(date, 1, 10) AS date,
+                   distance, moving_time, suffer_score, custom_score
+            FROM activities 
+            WHERE user_id = ? 
+              AND SUBSTR(date, 1, 10) >= ? 
+              AND SUBSTR(date, 1, 10) < ?
+            ORDER BY date ASC
+        `).all(numericUserId, startDateStr, endDateStr);
 
-            sessions = db.prepare(`
-                SELECT ${selectFields}
-                FROM training_plan 
-                WHERE user_id = ? AND date >= ? AND date < ?
-                ORDER BY date ASC, start_time ASC
-            `).all(userId, startDate, endDate);
-        } else {
-            // Vue mensuelle
-            sessions = db.prepare(`
-                SELECT ${selectFields}
-                FROM training_plan 
-                WHERE user_id = ? AND date LIKE ?
-                ORDER BY date ASC, start_time ASC
-            `).all(userId, `${startDate.substring(0, 7)}%`);
-        }
+        console.log("=== DIAGNOSTIC CALENDRIER ===");
+        console.log(`Plage recherchée : ${startDateStr} à ${endDateStr}`);
+        console.log(`Séances planifiées : ${plannedSessions.length} | Activités Strava : ${realActivities.length}`);
 
-        // Récupération de l'état de fraîcheur Banister le plus récent
+        let finalTimeline = [];
+
+        // Boucle A : Corrélation avec une tolérance temporelle de 1 jour (Fuzzy Matching)
+        plannedSessions.forEach(p => {
+            const pDate = new Date(p.date);
+
+            const matchIndex = realActivities.findIndex(act => {
+                const actDate = new Date(act.date);
+                // Calcul de la différence en jours
+                const diffTime = Math.abs(actDate - pDate);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                
+                // Match si même sport ET écart <= 1 jour (ex: séance prévue mardi faite le lundi soir ou mercredi)
+                return diffDays <= 1 && isSportMatch(act.type, p.type);
+            });
+            
+            let realizedData = null;
+            if (matchIndex !== -1) {
+                const match = realActivities[matchIndex];
+                realizedData = {
+                    id: match.id,
+                    name: match.name,
+                    duration_minutes: Math.round(match.moving_time / 60),
+                    actual_load: match.custom_score || match.suffer_score || 0,
+                    distance_km: match.distance ? Number(match.distance).toFixed(1) : null
+                };
+                realActivities.splice(matchIndex, 1); // Supprimé pour ne pas être dupliqué en Boucle B
+            }
+
+            let cleanType = p.type;
+            if (cleanType.toLowerCase() === 'bike') cleanType = 'Ride';
+            cleanType = cleanType.charAt(0).toUpperCase() + cleanType.slice(1).toLowerCase();
+
+            finalTimeline.push({
+                ...p,
+                type: cleanType,
+                duration_minutes: p.duration_minutes ? Math.round(p.duration_minutes) : null,
+                is_unpredicted: false,
+                realized: realizedData
+            });
+        });
+
+        // Boucle B : Les activités réelles qui n'ont STRICTEMENT RIEN à voir avec le plan de cette semaine
+        realActivities.forEach(act => {
+            let cleanType = act.type || 'Ride';
+            if (cleanType.toLowerCase() === 'bike') cleanType = 'Ride';
+            cleanType = cleanType.charAt(0).toUpperCase() + cleanType.slice(1).toLowerCase();
+
+            finalTimeline.push({
+                id: `strava-${act.id}`,
+                date: act.date,
+                start_time: "00:00", 
+                title: act.name,
+                description: "Séance Strava non planifiée.",
+                type: cleanType,
+                duration_minutes: null,
+                target_duration: null,
+                target_distance: null,
+                target_load: null,
+                target_intensity_zone: null,
+                status: "completed",
+                strava_id: act.id,
+                is_unpredicted: true,
+                realized: {
+                    id: act.id,
+                    name: act.name,
+                    duration_minutes: Math.round(act.moving_time / 60),
+                    actual_load: act.custom_score || act.suffer_score || 0,
+                    distance_km: act.distance ? Number(act.distance).toFixed(1) : null
+                }
+            });
+        });
+
+        // Tri final chronologique
+        finalTimeline.sort((a, b) => a.date.localeCompare(b.date) || a.start_time.localeCompare(b.start_time));
+
         const fitness = db.prepare(`
             SELECT ctl, atl, tsb FROM daily_fitness 
             WHERE user_id = ? 
             ORDER BY date DESC LIMIT 1
-        `).get(userId) || { ctl: 45.2, atl: 38.0, tsb: 7.2 };
+        `).get(numericUserId) || { ctl: 45.2, atl: 38.0, tsb: 7.2 };
 
         res.json({
             success: true,
-            days: sessions,
+            days: finalTimeline,
             fitness: {
                 ctl: fitness.ctl,
                 atl: fitness.atl,
                 tsb: fitness.tsb,
-                readiness_score: 85
+                readiness_score: fitness.tsb > 0 ? 85 : 65
             }
         });
     } catch (error) {
@@ -83,7 +185,6 @@ router.get('/', (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
-
 // =========================================================================
 // 🚀 2. POST /api/planning/generate (BLOC PROGRESSIF PLANIFIÉ)
 // =========================================================================
@@ -95,10 +196,10 @@ router.post('/generate', (req, res) => {
     }
 
     try {
+        const numericUserId = parseInt(userId, 10); // 🎯 FIX : Cast Id
         const start = new Date(startDate);
-        const weekCoefficients = [1.0, 1.1, 1.2, 0.7]; // Surcharge progressive 3:1
+        const weekCoefficients = [1.0, 1.1, 1.2, 0.7]; 
         
-        // Nettoyer l'ancien plan théorique sur la plage des 4 semaines (28 jours)
         const endRange = new Date(start);
         endRange.setDate(start.getDate() + 28);
         const endDateStr = formatLocalYYYYMMDD(endRange);
@@ -110,22 +211,20 @@ router.post('/generate', (req, res) => {
               AND date < ? 
               AND status = 'planned'
               AND strava_id IS NULL
-          `).run(userId, startDate, endDateStr);
+          `).run(numericUserId, startDate, endDateStr);
 
-        // Changement ici : Mappage exact avec tes vraies colonnes SQLite
         const insertSession = db.prepare(`
             INSERT INTO training_plan 
-            (user_id, date, title, description, type, target_duration, target_load, target_intensity_zone, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'planned')
+            (user_id, date, start_time, title, description, type, target_duration, target_load, target_intensity_zone, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'planned')
         `);
 
         const runTransaction = db.transaction((uId, startDateObj, baseHours) => {
             for (let w = 0; w < 4; w++) {
                 const currentWeekHours = baseHours * weekCoefficients[w];
-                const totalSeconds = currentWeekHours * 3600; // Stockage en SECONDES pur !
-
+                const totalSeconds = currentWeekHours * 3600;
                 const litSecondsTarget = totalSeconds * 0.80;
-                const hitSecondsTarget = totalSeconds * 0.20;
+                const hitSessionSeconds = Math.min(3600, (totalSeconds * 0.12)); 
 
                 const mondayOfWeek = new Date(startDateObj);
                 mondayOfWeek.setDate(startDateObj.getDate() + (w * 7));
@@ -136,40 +235,40 @@ router.post('/generate', (req, res) => {
                     return formatLocalYYYYMMDD(d);
                 };
 
-                // 🗓️ Mardi : Séance HIT (VMA / PMA)
-                const hitLoad = Math.round(currentWeekHours * 12);
+                // 🗓️ Mardi : Séance HIT
+                const hitLoad = Math.round(currentWeekHours * 10);
                 insertSession.run(
-                    uId, formatDay(1), "PMA Développement", 
-                    "Série de 30s/30s sur home-trainer ou côtes. Focus puissance max.", 
-                    "Ride", Math.round(hitSecondsTarget), hitLoad, "HIT"
+                    uId, formatDay(1), "18:30", "PMA Développement", 
+                    "Échauffement 20 min. Corps de séance : 2 séries de 8x (30s max / 30s récup). Récupération 10 min.", 
+                    "Ride", Math.round(hitSessionSeconds), hitLoad, "HIT"
                 );
 
-                // 🗓️ Jeudi : Séance LIT (Endurance Fondamentale)
-                const litRunLoad = Math.round(currentWeekHours * 8);
+                // 🗓️ Jeudi : Footing LIT
+                const litRunLoad = Math.round(currentWeekHours * 7);
                 insertSession.run(
-                    uId, formatDay(3), "Footing Endurance Fondamentale", 
-                    "Course à pied en aisance respiratoire stricte.", 
+                    uId, formatDay(3), "18:45", "Footing Endurance Fondamentale", 
+                    "Course à pied en aisance respiratoire stricte. Relâchement postural.", 
                     "Run", Math.round(litSecondsTarget * 0.35), litRunLoad, "LIT"
                 );
 
-                // 🗓️ Samedi : Natation Technique (LIT)
+                // 🗓️ Samedi : Natation Technique
                 insertSession.run(
-                    uId, formatDay(5), "Natation Endurance & Technique", 
-                    "Focus glisse, éducatifs puis blocs réguliers.", 
+                    uId, formatDay(5), "09:00", "Natation Endurance & Technique", 
+                    "Focus glisse, éducatifs (brique, un bras) puis blocs réguliers allure M.", 
                     "Swim", Math.round(litSecondsTarget * 0.15), 30, "LIT"
                 );
 
-                // 🗓️ Dimanche : Sortie Longue (LIT)
-                const longRideLoad = Math.round(currentWeekHours * 15);
+                // 🗓️ Dimanche : Sortie Longue
+                const longRideLoad = Math.round(currentWeekHours * 14);
                 insertSession.run(
-                    uId, formatDay(6), "Sortie Longue Aérobie", 
-                    "Sortie foncière vélo pour construire la caisse.", 
+                    uId, formatDay(6), "08:30", "Sortie Longue Aérobie", 
+                    "Sortie foncière route pour construire la caisse. Option bosses au train sans basculer in HIT.", 
                     "Ride", Math.round(litSecondsTarget * 0.50), longRideLoad, "LIT"
                 );
             }
         });
 
-        runTransaction(userId, start, targetWeeklyHours);
+        runTransaction(numericUserId, start, targetWeeklyHours);
         return res.json({ success: true, message: "Bloc algorithmique de 4 semaines généré avec succès !" });
 
     } catch (err) {
@@ -178,40 +277,16 @@ router.post('/generate', (req, res) => {
     }
 });
 
-// =========================================================================
-// ✍️ 3. POST /api/planning/session (ÉDITION / AJOUT MANUEL)
-// =========================================================================
-router.post('/session', (req, res) => {
-    // Le front envoie duration_minutes, on le multiplie par 60 pour sauver en secondes (target_duration)
-    const { id, user_id, date, start_time, title, description, type, duration_minutes, target_distance, target_load, target_intensity_zone, status } = req.body;
-    const target_duration = duration_minutes ? duration_minutes * 60 : null;
-
-    try {
-        if (id) {
-            db.prepare(`
-                UPDATE training_plan 
-                SET date = ?, start_time = ?, title = ?, description = ?, type = ?, target_duration = ?, target_distance = ?, target_load = ?, target_intensity_zone = ?, status = ?
-                WHERE id = ? AND user_id = ?
-            `).run(date, start_time, title, description, type, target_duration, target_distance, target_load, target_intensity_zone, status, id, user_id);
-            return res.json({ success: true, message: "Séance mise à jour !" });
-        } else {
-            db.prepare(`
-                INSERT INTO training_plan (user_id, date, start_time, title, description, type, target_duration, target_distance, target_load, target_intensity_zone, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(user_id, date, start_time, title, description, type, target_duration, target_distance, target_load, target_intensity_zone, status || 'planned');
-            return res.json({ success: true, message: "Séance ajoutée au plan !" });
-        }
-    } catch (err) {
-        return res.status(500).json({ success: false, error: err.message });
-    }
-});
 
 // =========================================================================
-// 🧠 4. POST /api/planning/reschedule (MOTEUR D'ARBITRAGE ADAPTATIF)
+// 🧠 3. POST /api/planning/reschedule (MOTEUR D'ARBITRAGE ADAPTATIF)
 // =========================================================================
 router.post('/reschedule', async (req, res) => {
     try {
         const { userId } = req.body;
+        if (!userId) return res.status(400).json({ success: false, error: "userId requis." });
+
+        const numericUserId = parseInt(userId, 10); // 🎯 FIX : Cast Id
         const today = new Date();
         const todayStr = formatLocalYYYYMMDD(today);
         const dayOfWeekToday = today.getDay(); 
@@ -219,33 +294,29 @@ router.post('/reschedule', async (req, res) => {
         const currentWeekNum = getWeekNumber(today);
         const weekType = currentWeekNum % 2 === 0 ? 'even' : 'odd';
 
-        // 1. Récupération des données Garmin / Élan du jour
-        const fitness = db.prepare('SELECT readiness_score, hrv_status, tsb FROM daily_fitness WHERE user_id = ? AND date = ?').get(userId, todayStr);
+        const fitness = db.prepare('SELECT readiness_score, hrv_status, tsb FROM daily_fitness WHERE user_id = ? AND date = ?').get(numericUserId, todayStr);
         
-        // 2. Récupération des contraintes appliquées pour AUJOURD'HUI
         const restrictionToday = db.prepare(`
             SELECT is_blocked FROM user_constraints 
             WHERE user_id = ? AND day_of_week = ?
               AND (specific_date = ? OR (specific_date IS NULL AND (week_alternation = 'all' OR week_alternation = ?)))
             LIMIT 1
-        `).get(userId, dayOfWeekToday, todayStr, weekType);
+        `).get(numericUserId, dayOfWeekToday, todayStr, weekType);
 
-        const currentRestriction = restrictionToday ? restrictionToday.is_blocked : 0; 
-
-        // 3. Récupération de la séance prévue aujourd'hui
-        const todaysSession = db.prepare('SELECT * FROM training_plan WHERE user_id = ? AND date = ? AND status = "planned"').get(userId, todayStr);
+        const currentRestriction = restrictionToday ? Number(restrictionToday.is_blocked) : 0; 
+        const todaysSession = db.prepare('SELECT * FROM training_plan WHERE user_id = ? AND date = ? AND status = "planned"').get(numericUserId, todayStr);
 
         if (!todaysSession) {
             return res.json({ success: true, message: "Aucune séance théorique planifiée pour aujourd'hui." });
         }
 
-        // --- ARBITRAGE RÈGLE A : VERROU STRICT DE L'AGENDA (is_blocked = 2) ---
+        // Arbitrage Option 2 : Indisponibilité Absolue (Bloqué Strict)
         if (currentRestriction === 2) {
             db.prepare('UPDATE training_plan SET status = "skipped", description = "[Arbitrage] Annulé pour cause d\'indisponibilité absolue." WHERE id = ?').run(todaysSession.id);
             return res.json({ success: true, message: "Agenda bloqué (Strict) : Séance annulée pour indisponibilité temporelle." });
         }
 
-        // --- ARBITRAGE RÈGLE B : ENTRÉE EN CASERNE INDOOR (is_blocked = 1) ---
+        // Arbitrage Option 1 : Agenda Hybride (Repli en intérieur)
         if (currentRestriction === 1) {
             if (todaysSession.type === 'Run') {
                 db.prepare(`
@@ -253,6 +324,7 @@ router.post('/reschedule', async (req, res) => {
                     SET title = "Renforcement de Substitution", 
                         type = "Strength",
                         description = "[Arbitrage Indoor] Séance CAP extérieure impossible. Remplacé par du Core/Gainage stable en intérieur.",
+                        target_duration = 2700, 
                         target_intensity_zone = "LIT",
                         target_load = 20
                     WHERE id = ?
@@ -263,7 +335,7 @@ router.post('/reschedule', async (req, res) => {
             if (todaysSession.type === 'Ride' && !todaysSession.description.includes('home-trainer')) {
                 const newTitle = `${todaysSession.title} (Format Home-Trainer)`;
                 const newDesc = `[Arbitrage Indoor] Transféré sur Home-Trainer : ${todaysSession.description}`;
-                const newLoad = Math.round(todaysSession.target_load * 0.85); 
+                const newLoad = Math.round(todaysSession.target_load * 0.85);
 
                 db.prepare(`
                     UPDATE training_plan 
@@ -274,7 +346,7 @@ router.post('/reschedule', async (req, res) => {
             }
         }
 
-        // --- ARBITRAGE RÈGLE C : ALERTE PHYSIOLOGIQUE (Garmin Santé Basse) ---
+        // Arbitrage Physiologique : HRV ou fatigue nerveuse
         if (fitness && (fitness.readiness_score < 65 || fitness.hrv_status === 'low')) {
             if (todaysSession.target_intensity_zone === 'HIT') {
                 db.prepare(`

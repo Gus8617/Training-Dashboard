@@ -6,7 +6,7 @@ const { syncGarminHealth } = require('../services/garmin.service');
 const { computeFitness } = require('../services/fitness.service');
 
 // =========================================================================
-// 📑 CORE MONITORING & SYNCHRONISATION
+// 📑 CORE MONITORING & SYNCHRONISATION (REMIS EXACTEMENT COMME AVANT)
 // =========================================================================
 
 router.get('/status', (req, res) => {
@@ -31,17 +31,24 @@ router.get('/health', (req, res) => {
     res.json(db.prepare("SELECT * FROM health ORDER BY date ASC").all());
 });
 
+// Reprise stricte de ton ancienne méthode
 router.post('/sync/all', async (req, res) => {
-  const { userId } = req.body; 
+    const { userId } = req.body || {}; 
 
-  if (!userId) {
-      return res.status(400).json({ error: "UserId manquant" });
-  }
+    if (!userId) {
+        return res.status(400).json({ error: "UserId manquant" });
+    }
 
   try {
       console.log(`🚀 Lancement de la synchro complète pour l'user ${userId}`);
+
+      // 1. On synchronise les activités Strava
       const stravaResult = await syncAll(userId);
+      
+      // 2. On synchronise la santé Garmin
       const garminResult = await syncGarminHealth(userId);
+
+      // 3. Calcul des metriques fitness (Remplissage daily_fitness)
       const calcResult = await computeFitness(userId);
 
       res.json({ 
@@ -53,7 +60,10 @@ router.post('/sync/all', async (req, res) => {
       });
   } catch (err) {
       console.error("🔥 Erreur synchro globale:", err);
-      res.status(500).json({ success: false, error: "Erreur lors de la synchronisation globale" });
+      res.status(500).json({ 
+          success: false, 
+          error: "Erreur lors de la synchronisation globale" 
+      });
   }
 });
 
@@ -85,16 +95,13 @@ router.get('/stats/annual', (req, res) => {
 // 🔓 GESTION DES CONTRAINTES & DISPONIBILITÉS (`user_constraints`)
 // =========================================================================
 
-// 1. OBTENIR LES CONTRAINTES (Filtrées par parité de semaine 'even' ou 'odd')
 router.get('/constraints/:userId', (req, res) => {
     try {
         const { userId } = req.params;
-        const { weekType } = req.query; // 'even' ou 'odd' envoyé par le front
+        const { weekType } = req.query;
 
         let constraints;
         if (weekType) {
-            // Récupère les règles spécifiques à une date OU les récurrentes qui matchent la parité (ou 'all')
-            // Note: On supprime le filtre "is_blocked = 0" pour afficher aussi bien les créneaux Ouverts que les Verrous (Locks)
             constraints = db.prepare(`
                 SELECT *, rowid as slot_id FROM user_constraints 
                 WHERE user_id = ? 
@@ -115,12 +122,10 @@ router.get('/constraints/:userId', (req, res) => {
     }
 });
 
-// 2. ENREGISTREMENT BATCH (Gère la récurrence, les dates fixes et l'alternance)
 router.post('/constraints/save-batch', (req, res) => {
     try {
         const { user_id, days, start_time, end_time, specific_date, is_blocked, week_alternation } = req.body;
 
-        // Nettoyage ou remplacement pour éviter les doublons stricts sur la même clé naturelle
         const deleteExistingStmt = db.prepare(`
             DELETE FROM user_constraints 
             WHERE user_id = ? AND day_of_week = ? AND (specific_date = ? OR (specific_date IS NULL AND ? IS NULL)) AND start_time = ? AND week_alternation = ?
@@ -133,13 +138,11 @@ router.post('/constraints/save-batch', (req, res) => {
 
         const runBatch = db.transaction((userId, targetDays, targetDate, start, end, blocked, alternation) => {
             if (targetDate) {
-                // Mode Date Unique
                 const d = new Date(targetDate);
                 const dayOfWeek = d.getDay(); 
                 deleteExistingStmt.run(userId, dayOfWeek, targetDate, targetDate, start, 'all');
                 insertStmt.run(userId, dayOfWeek, targetDate, start, end, blocked, 'all');
             } else {
-                // Mode Récurrent
                 for (const day of targetDays) {
                     deleteExistingStmt.run(userId, day, null, null, start, alternation);
                     insertStmt.run(userId, day, null, start, end, blocked, alternation);
@@ -154,7 +157,6 @@ router.post('/constraints/save-batch', (req, res) => {
     }
 });
 
-// 3. SUPPRESSION D'UN CRÉNEAU
 router.delete('/constraints/delete', (req, res) => {
     try {
         const { user_id, day_of_week, specific_date, start_time, week_alternation } = req.body;
@@ -184,7 +186,6 @@ router.delete('/constraints/delete', (req, res) => {
 // 🏊 GESTION DES ENTRAÎNEMENTS FIXES RITUELS (`recurring_sessions`)
 // =========================================================================
 
-// 1. RÉCUPÉRER TOUS LES RITUELS D'UN UTILISATEUR
 router.get('/recurring-sessions/:userId', (req, res) => {
     try {
         const { userId } = req.params;
@@ -200,7 +201,6 @@ router.get('/recurring-sessions/:userId', (req, res) => {
     }
 });
 
-// 2. AJOUTER / METTRE À JOUR UN RITUEL
 router.post('/recurring-sessions/save', (req, res) => {
     try {
         const { 
@@ -221,7 +221,6 @@ router.post('/recurring-sessions/save', (req, res) => {
     }
 });
 
-// 3. SUPPRIMER UN RITUEL VIA SON ID
 router.delete('/recurring-sessions/delete/:id', (req, res) => {
     try {
         const { id } = req.params;
