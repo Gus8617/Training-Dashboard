@@ -11,14 +11,13 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     firstname TEXT UNIQUE,
-    password TEXT, -- On stockera le hash ici
-    client_id TEXT,
-    client_secret TEXT,
-    refresh_token TEXT,
+    password TEXT,
+    strava_athlete_id TEXT, -- ID unique de l'athlète retourné par Strava
     access_token TEXT,
+    refresh_token TEXT,
+    expires_at INTEGER,
     garmin_email TEXT,
-    garmin_password TEXT,
-    expires_at INTEGER
+    garmin_password TEXT
   );
 `);
 

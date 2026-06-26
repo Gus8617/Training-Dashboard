@@ -6,8 +6,6 @@ import ActivityTable from '../dashboard/ActivityTable';
 import RecoveryAdvisor from '../dashboard/RecoveryAdvisor';
 import HealthMetricsCharts from '../health/HealthMetricsCharts';
 import HealthTable from '../health/HealthTable';
-import YearlyRecap from '../dashboard/YearlyRecap';
-import HeartRateZonesChart from '../health/HeartRateZonesChart';
 import MethodologyCard from '../ui/MethodologyCard';
 import { Activity } from 'lucide-react';
 import CoachCalendar from '../calendar/CoachCalendar';
@@ -146,9 +144,7 @@ export default function Dashboard({ user, onLogout }) {
            <MetricCard title="TSS Hebdo" label="Charge 7 derniers jours" value={Math.round(weeklyTSS)} color="purple" trend={tssDiff} />
         </div>
 
-        <YearlyRecap activities={data.activities} />
         <PerformanceCharts fitness={data.fitness} health={data.health} />
-        <HeartRateZonesChart activities={data.activities} />
         <HealthMetricsCharts data={data.fitness} />
         <ActivityTable activities={data.activities} />
         <HealthTable data={data.health} />

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Lock, User, ArrowRight } from 'lucide-react';
+import { Lock, User, ArrowRight, Loader2 } from 'lucide-react';
 
 export default function LoginPage({ onLogin }) {
     const [isRegister, setIsRegister] = useState(false);
@@ -14,7 +14,6 @@ export default function LoginPage({ onLogin }) {
         e.preventDefault();
         setLoading(true);
 
-        // URL correspondant à ton server.js (app.use('/auth', ...))
         const API_URL = "/auth"; 
         const endpoint = isRegister ? '/register' : '/login';
         
@@ -31,13 +30,13 @@ export default function LoginPage({ onLogin }) {
             
             if (res.ok) {
                 console.log("✅ Connexion réussie :", data);
-                onLogin(data); // On passe l'utilisateur à l'App
+                onLogin(data); 
             } else {
                 alert(data.error || "Erreur de connexion");
             }
         } catch (err) {
             console.error("❌ Erreur réseau :", err);
-            alert("Serveur injoignable (port 3000)");
+            alert("Serveur injoignable");
         } finally {
             setLoading(false);
         }
@@ -60,6 +59,7 @@ export default function LoginPage({ onLogin }) {
                             placeholder="Prénom"
                             value={formData.firstname}
                             required
+                            disabled={loading}
                             onChange={e => setFormData({...formData, firstname: e.target.value})}
                         />
                     </div>
@@ -72,22 +72,33 @@ export default function LoginPage({ onLogin }) {
                             placeholder="Mot de passe"
                             value={formData.password}
                             required
+                            disabled={loading}
                             onChange={e => setFormData({...formData, password: e.target.value})}
                         />
                     </div>
 
                     <button 
                         disabled={loading}
-                        className="w-full bg-white text-black font-black p-4 rounded-2xl transition hover:bg-slate-200 mt-6 flex items-center justify-center gap-2"
+                        className="w-full bg-white text-black font-black p-4 rounded-2xl transition hover:bg-slate-200 mt-6 flex items-center justify-center gap-2 disabled:opacity-70 disabled:hover:bg-white"
                     >
-                        {loading ? 'CHARGEMENT...' : (isRegister ? 'S\'INSCRIRE' : 'SE CONNECTER')}
-                        <ArrowRight size={20} />
+                        {loading ? (
+                            <>
+                                <span>CHARGEMENT...</span>
+                                <Loader2 className="animate-spin" size={20} />
+                            </>
+                        ) : (
+                            <>
+                                <span>{isRegister ? "S'INSCRIRE" : "SE CONNECTER"}</span>
+                                <ArrowRight size={20} />
+                            </>
+                        )}
                     </button>
                 </form>
 
                 <button 
+                    disabled={loading}
                     onClick={() => setIsRegister(!isRegister)}
-                    className="w-full text-slate-500 text-sm mt-6 hover:text-white transition"
+                    className="w-full text-slate-500 text-sm mt-6 hover:text-white transition disabled:opacity-50"
                 >
                     {isRegister ? "Déjà un compte ? Connexion" : "Pas de compte ? Créer mon profil"}
                 </button>

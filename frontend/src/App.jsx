@@ -6,6 +6,7 @@ import Connections from './components/settings/Connections';
 import CoachWorkspace from './components/coach/CoachWorkspace';
 import Navbar from './components/ui/Navbar';
 import Callback from './components/auth/Callback';
+import StatsDashboard from './components/stats/StatsDashboard';
 
 // --- PLUS BESOIN DE CONFIGURER L'URL ICI ---
 // En laissant une chaîne vide, le navigateur utilise l'hôte actuel.
@@ -68,6 +69,7 @@ function App() {
             <Route path="/" element={!user ? <LoginPage onLogin={handleLogin} /> : <Navigate to="/dashboard" />} />
             <Route path="/dashboard" element={user ? <Dashboard user={user} /> : <Navigate to="/" />} />
             <Route path="/coach" element={user ? <CoachWorkspace user={user} /> : <Navigate to="/" />} />
+            <Route path="/stats" element={user ? <StatsDashboard user={user} /> : <Navigate to="/" />} />
             <Route path="/connections" element={user ? <Connections user={user} /> : <Navigate to="/" />} />
             <Route path="/callback" element={<Callback user={user} />} />
             <Route path="*" element={<Navigate to="/dashboard" />} />

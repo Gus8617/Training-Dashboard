@@ -3,21 +3,28 @@ const db = require('../database');
 const { encrypt, decrypt } = require('../services/auth.service');
 const { formatActivityMessage, sendTelegramMessage } = require('./telegram.service');
 
-// Utilitaire pour respecter les quotas API Strava
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * 1. Gestion du rafraîchissement du Token Strava
+ * 1. Gestion du rafraîchissement du Token Strava (Multi-Tenant)
  */
 async function getStravaAccessToken(user) {
     const now = Math.floor(Date.now() / 1000);
     
+    // Si pas de token ou expiré/proche d'expirer (moins de 5 minutes)
     if (!user.access_token || (user.expires_at - now) < 300) {
         console.log(`[Strava] Token expiré pour ${user.firstname}, rafraîchissement...`);
+        
+        // Sécurité : On vérifie que les variables d'application globale existent
+        if (!process.env.STRAVA_CLIENT_ID || !process.env.STRAVA_CLIENT_SECRET) {
+            console.error("❌ Erreur : Les variables STRAVA_CLIENT_ID ou STRAVA_CLIENT_SECRET manquent dans le .env");
+            return null;
+        }
+
         try {
             const response = await axios.post('https://www.strava.com/oauth/token', {
-                client_id: user.client_id,
-                client_secret: decrypt(user.client_secret),
+                client_id: process.env.STRAVA_CLIENT_ID,
+                client_secret: process.env.STRAVA_CLIENT_SECRET, // Géré au niveau global (pas de decrypt nécessaire ici)
                 refresh_token: decrypt(user.refresh_token),
                 grant_type: 'refresh_token'
             });
@@ -45,8 +52,6 @@ async function getStravaAccessToken(user) {
 function calculateCustomScore(distributionBuckets) {
     if (!distributionBuckets || distributionBuckets.length === 0) return 0;
     
-    // Z1 (Récup), Z2 (Endurance), Z3 (Tempo), Z4 (Seuil), Z5 (PMA+)
-    // 1h à 100% du seuil (Z4) doit donner environ 100 points. 100 / 60 min = ~1.65
     const weights = [0.5, 1.0, 1.4, 1.7, 3.2]; 
     
     const score = distributionBuckets.reduce((total, bucket, index) => {
@@ -84,7 +89,7 @@ async function fetchMissingZones(accessToken, userId, limit = 80) {
 
     for (const act of pending) {
         try {
-            await sleep(250); // Sécurité anti-spam API
+            await sleep(250); 
             const response = await axios.get(
                 `https://www.strava.com/api/v3/activities/${act.id}/zones`,
                 { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -111,10 +116,15 @@ async function fetchMissingZones(accessToken, userId, limit = 80) {
     }
 }
 
+/**
+ * 4. Point d'entrée de la synchronisation
+ */
 async function syncAll(userId) {
     console.log(`\n🚀 Lancement de la synchronisation intelligente (User ${userId})`);
     
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(userId);
+    if (!user) return { success: false, error: "User not found" };
+
     const accessToken = await getStravaAccessToken(user);
     if (!accessToken) return { success: false, error: "Auth failed" };
 
@@ -132,7 +142,7 @@ async function syncAll(userId) {
     let page = 1;
     let totalNew = 0;
     let hasMore = true;
-    let activitiesToSend = []; // 🚩 On va stocker les nouvelles activités ici
+    let activitiesToSend = []; 
 
     while (hasMore) {
         try {
@@ -154,7 +164,7 @@ async function syncAll(userId) {
                         type: a.type,
                         date: a.start_date.split('T')[0],
                         distance: parseFloat((a.distance / 1000).toFixed(2)),
-                        moving_time: Math.round(a.moving_time), // On garde les secondes pour le calcul précis de l'allure
+                        moving_time: Math.round(a.moving_time), 
                         average_hr: Math.round(a.average_heartrate) || null,
                         suffer_score: a.suffer_score || a.relative_effort || 0,
                         hr_zones: JSON.stringify([]),
@@ -165,7 +175,6 @@ async function syncAll(userId) {
                     
                     if (res.changes > 0) {
                         insertedInPage++;
-                        // 🚩 On n'envoie pas le message dans la transaction (car async), on stocke pour après
                         activitiesToSend.push(data); 
                     }
                 }
@@ -185,14 +194,11 @@ async function syncAll(userId) {
         }
     }
 
-    // --- PHASE 2 : RÉCUPÉRATION DES ZONES & ENVOI TELEGRAM ---
     await fetchMissingZones(accessToken, userId, 80);
 
-    // 🚩 Une fois les zones récupérées en base, on envoie les messages
     if (activitiesToSend.length > 0) {
         console.log(`📩 Envoi de ${activitiesToSend.length} résumés à Telegram...`);
         for (const act of activitiesToSend) {
-            // On recharge l'activité depuis la base pour avoir les zones toutes fraîches
             const updatedAct = db.prepare("SELECT * FROM activities WHERE id = ?").get(act.id);
             const message = formatActivityMessage(updatedAct);
             await sendTelegramMessage(message);
@@ -205,4 +211,4 @@ async function syncAll(userId) {
     return { success: true, newActivities: totalNew, totalInDb: finalCount };
 }
 
-module.exports = { syncAll };
+module.exports = { syncAll, getStravaAccessToken };

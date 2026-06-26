@@ -94,7 +94,6 @@ export default function CoachCalendar() {
     const endDate = gridDays[gridDays.length - 1].dateStr;
   
     try {
-      // 🎯 FIX 1 : Changement de 'DELETE' à 'POST' pour correspondre à la route du backend
       const res = await fetch('/api/program/clear', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -156,7 +155,6 @@ export default function CoachCalendar() {
     const activeSessions = generateGridDays().filter(d => !d.isPadding).flatMap(d => d.sessions);
 
     activeSessions.forEach(s => {
-      // 🎯 FIX 2 : Lecture hybride (Prend la durée planifiée, ou à défaut la durée réelle Strava convertie en secondes)
       let duration = s.target_duration || 0;
       if (!duration && s.realized?.duration_minutes) {
         duration = s.realized.duration_minutes * 60;
@@ -198,13 +196,13 @@ export default function CoachCalendar() {
   const weeklySummary = calculateWeeklySummary();
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-full overflow-hidden">
       {/* BARRE INTERNE DE LA GRILLE CALENDRIER */}
-      <div className="flex justify-between items-center pt-2">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pt-2">
         <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
           Planification Courante <span className="text-[10px] text-slate-500 ml-1">(Semaine {currentWeekNum} - {isCurrentWeekEven ? 'Paire' : 'Impaire'})</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
           <button 
             onClick={handleClearWeek}
             className="flex items-center gap-1.5 bg-slate-900 border border-red-950 text-red-400 hover:bg-red-950/40 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all"
@@ -246,8 +244,6 @@ export default function CoachCalendar() {
               }
 
               const isToday = day.dateStr === todayStr;
-
-              // 🎯 ANALYSE DES STATUTS DE LA JOURNÉE POUR LE CODE COULEUR
               const hasImprovisé = day.sessions.some(s => s.is_unpredicted);
               const hasMatch = day.sessions.some(s => !s.is_unpredicted && !!s.realized);
               const hasOnlyPlanned = day.sessions.some(s => !s.is_unpredicted && !s.realized);
@@ -259,11 +255,9 @@ export default function CoachCalendar() {
                 dayBorderClass = 'border-blue-500/60 shadow-lg shadow-blue-500/5';
                 dayBgClass = 'bg-slate-900/80';
               } else if (hasMatch && !hasOnlyPlanned) {
-                // Toutes les séances prévues du jour ont été réalisées !
                 dayBorderClass = 'border-emerald-500/30 hover:border-emerald-500/50';
                 dayBgClass = 'bg-emerald-950/5';
               } else if (hasImprovisé && day.sessions.length === 1) {
-                // Uniquement une sortie Strava non planifiée ce jour-là
                 dayBorderClass = 'border-violet-500/30 hover:border-violet-500/50';
                 dayBgClass = 'bg-violet-950/5';
               }
@@ -289,7 +283,6 @@ export default function CoachCalendar() {
                       <div className="text-[9px] text-slate-600 italic font-medium mt-1">Assimilation</div>
                     ) : (
                       day.sessions.map(session => {
-                        // 🎯 EXTRACTION DES STATUTS POUR LA CARTE ENFANT
                         const isMatch = !session.is_unpredicted && !!session.realized;
                         const isImprovisé = !!session.is_unpredicted;
 
@@ -310,11 +303,13 @@ export default function CoachCalendar() {
             })}
           </div>
 
-          {/* BANDEAU DE SYNTHÈSE GLOBAL DU BAS */}
+          {/* BANDEAU DE SYNTHÈSE GLOBAL DU BAS (FIXÉ POUR MOBILE) */}
           {viewMode === 'week' && (
-            <div className="bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 text-xs font-medium text-slate-300 shadow-inner flex flex-col lg:flex-row gap-6 items-center justify-between">
-              <div className="w-full lg:w-1/2 min-w-[450px] overflow-x-auto">
-                <table className="w-full text-left font-mono text-[11px]">
+            <div className="bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 text-xs font-medium text-slate-300 shadow-inner flex flex-col lg:flex-row gap-6 items-stretch lg:items-center justify-between w-full overflow-hidden">
+              
+              {/* Conteneur Tableau avec Scroll de secours uniquement sur le tableau si l'écran est minuscule */}
+              <div className="w-full lg:w-1/2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                <table className="w-full text-left font-mono text-[11px] min-w-[400px] lg:min-w-0">
                   <thead>
                     <tr className="border-b border-slate-800 text-slate-500 font-bold uppercase text-[9px] tracking-wider">
                       <th className="pb-1 pl-1 text-left">Volume</th>
@@ -338,8 +333,9 @@ export default function CoachCalendar() {
                 </table>
               </div>
 
-              <div className="w-full lg:flex-1 flex flex-col gap-1.5 px-2">
-                <div className="flex justify-between font-mono text-[10px] uppercase text-slate-400 font-bold tracking-wider">
+              {/* Barre de répartition de l'intensité */}
+              <div className="w-full lg:flex-1 flex flex-col gap-1.5">
+                <div className="flex flex-wrap justify-between gap-1 font-mono text-[10px] uppercase text-slate-400 font-bold tracking-wider">
                   <span>Intensity Distribution</span>
                   <span className="text-blue-400">Load: {weeklySummary.totalTss} TSS</span>
                 </div>
@@ -349,6 +345,7 @@ export default function CoachCalendar() {
                   {weeklySummary.hitPct > 0 && <div className="h-full bg-red-500 transition-all flex items-center justify-center text-[8px] font-black text-white" style={{ width: `${weeklySummary.hitPct}%` }} title="HIT">{weeklySummary.hitPct}%</div>}
                 </div>
               </div>
+
             </div>
           )}
         </div>
