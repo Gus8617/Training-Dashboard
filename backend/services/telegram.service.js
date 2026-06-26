@@ -17,62 +17,108 @@ const sendTelegramMessage = async (message) => {
     }
 };
 
-const generateDailyReport = (user, fitness, health) => {
+/**
+ * Génère un rapport matinal complet avec analyse croisée et prochaine séance
+ */
+const generateDailyReport = (user, fitness, health, nextSession = null) => {
     const today = fitness[fitness.length - 1] || {};
-    const yesterday = fitness[fitness.length - 2] || {};
     const lastHealth = health[health.length - 1] || {};
 
-    // Calcul de la tendance TSB
-    const tsbStatus = today.tsb > 5 ? "🟢 Frais" : today.tsb < -10 ? "🔴 Fatigué" : "🟡 Optimal";
-    const hrvStatus = lastHealth.hrv > 60 ? "🚀 Excellente" : "📉 Basse"; // Adapte selon tes moyennes
+    // 1. ANALYSE STATUT DYNAMIQUE (Zone cible TSB : -10 à -20)
+    let tsbStatus = "🟡 Zone Neutre";
+    if (today.tsb >= -20 && today.tsb <= -10) tsbStatus = "🔥 Zone Optimale (Surcharge saine)";
+    else if (today.tsb < -25) tsbStatus = "🚨 Surchorbi / Surmenage";
+    else if (today.tsb > 5) tsbStatus = "🟢 Désentraînement / Fraîcheur haute";
 
-    // GESTION DU READINESS SCORE (Couleur dynamique)
+    // Évaluation HRV (Basé sur tes moyennes constatées ~63ms)
+    const hrvStatus = lastHealth.hrv > 65 ? "📈 Excellente" : lastHealth.hrv < 55 ? "📉 Basse" : "✨ Stable";
+
+    // Couleur du Readiness Score
     let readinessEmoji = "⚪";
     if (today.readiness_score >= 80) readinessEmoji = "🟢";
     else if (today.readiness_score >= 50) readinessEmoji = "🟡";
     else if (today.readiness_score > 0) readinessEmoji = "🔴";
 
+    // 2. TEXTE DE LA PROCHAINE SÉANCE PLANIFIÉE
+    let planningMsg = "📅 *PLANNING :* Aucune séance planifiée prochainement.";
+    if (nextSession) {
+        const logos = { 'Run': '🏃', 'Ride': '🚴', 'Swim': '🏊', 'WeightTraining': '🏋️' };
+        const logo = logos[nextSession.type] || '📅';
+        
+        // Formatage du jour (Aujourd'hui, Demain ou Date)
+        const sessionDate = new Date(nextSession.date).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'short' });
+        planningMsg = `🎯 *PROCHAINE SÉANCE (${sessionDate}) :*\n${logo} *${nextSession.name || nextSession.type}*\n⏱️ Objectif : ${nextSession.duration_target || 'N/A'} min | 📊 Charge visée : ${nextSession.tss_target || '?'} TSS`;
+    }
+
     return `
 *📊 BILAN MATINAL - ${user.firstname}*
 ---------------------------
-*🔥 PERFORMANCE*
+*💪 MÉTRIQUES DE PERFORMANCE*
 • *Fitness (CTL) :* ${Math.round(today.ctl)}
 • *Fatigue (ATL) :* ${Math.round(today.atl)}
-• *Forme (TSB) :* ${Math.round(today.tsb)} (${tsbStatus})
-• *Readiness :* ${readinessEmoji} ${today.readiness_score || 'N/A'}/100 
+• *Forme (TSB) :* ${Math.round(today.tsb)} 
+👉 _${tsbStatus}_
 
-*💤 RÉCUPÉRATION*
-• *Sommeil :* ${Math.floor(lastHealth.duration / 60)}h${lastHealth.duration % 60}m
-• *HRV :* ${lastHealth.hrv} ms (${hrvStatus})
+*💤 ÉTATS PHYSIOLOGIQUES*
+• *Readiness :* ${readinessEmoji} *${today.readiness_score || 'N/A'}/100*
+• *Sommeil :* ${Math.floor(lastHealth.duration / 60)}h${lastHealth.duration % 60}m (${lastHealth.sleep_score || '?'}%)
+• *HRV Nocturne :* ${lastHealth.hrv} ms (${hrvStatus})
+• *Pouls au Repos :* ${lastHealth.rhr || '?'} bpm
 
-*🏃 CONSEIL DU JOUR*
-${getCoachAdvice(today.tsb, lastHealth.hrv)}
+*🧠 CONSEIL DU COACH PERSONNALISÉ*
+${getAdvancedCoachAdvice(today.tsb, lastHealth.hrv, lastHealth.sleep_score)}
+
 ---------------------------
-[Ouvrir le Dashboard](https://training-dashboard.com)
+${planningMsg}
+---------------------------
+🔗 [Ouvrir le Dashboard](https://training-dashboard.com)
     `;
 };
 
-const formatActivityMessage = (activity) => {
-    // 1. DATE ET HEURE
-    const dateObj = new Date(activity.date);
-    const timeStr = dateObj.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-    const dateStr = dateObj.toLocaleDateString('fr-FR');
+/**
+ * Logique de conseil avancée croisant la fatigue systémique (TSB) et nerveuse (HRV)
+ */
+function getAdvancedCoachAdvice(tsb, hrv, sleepScore) {
+    // Cas 1 : Fatigue cardiaque et nerveuse critique
+    if (tsb < -25 && hrv < 55) {
+        return "🛑 *STOP - REPOS IMPÉRATIF* : Ton TSB plonge et ton système nerveux (HRV) sature. Aujourd'hui, c'est off ou récupération ultra-passive pour éviter la blessure.";
+    }
+    // Cas 2 : Sur-stock de fraîcheur / Reprise
+    if (tsb > 5 && hrv > 65) {
+        return "⚡ *VOYANTS AU VERT* : Tu as sur-récupéré. C'est la journée idéale pour placer un bloc de haute intensité (PMA / Seuils) ou une grosse sortie longue.";
+    }
+    // Cas 3 : TSB bas (fatigue normale d'entraînement) mais HRV solide
+    if (tsb <= -10 && tsb >= -22 && hrv >= 60) {
+        return "✅ *TRAINING ZONE ACTIVE* : La charge s'accumule mais ton corps l'encaisse parfaitement (HRV stable). Tu peux suivre ton planning et charger aujourd'hui.";
+    }
+    // Cas 4 : TSB correct mais mauvaise nuit / chute HRV
+    if (hrv < 54 || (sleepScore && sleepScore < 65)) {
+        return "🧘 *PRUDENCE NERVEUSE* : Ton niveau de forme théorique est bon, mais la récupération brute a péché cette nuit. Privilégie une séance en endurance fondamentale (Zone 2) sans intensité.";
+    }
+    // Cas 5 : Désentraînement passif
+    if (tsb > 8 && hrv <= 62) {
+        return "⏳ *DESENTRAÎNEMENT DISCRET* : Ta fatigue est totalement effacée, mais ta HRV stagne. Il est temps de remettre du volume ou une stimulation pour réveiller le moteur.";
+    }
 
-    // 2. LOGO DYNAMIQUE
+    return "🏃 *SENSATIONS REINES* : Les métriques sont stables. Ajuste l'intensité de ta séance directement en fonction de tes premières minutes d'échauffement.";
+}
+
+// formatActivityMessage reste inchangé
+const formatActivityMessage = (activity) => {
+    const dateObj = new Date(activity.date);
+    const dateStr = dateObj.toLocaleDateString('fr-FR', {
+        weekday: 'long', // ex: "mardi"
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+    });
+
     const logos = {
-        'Run': '🏃',
-        'VirtualRun': '🏃‍♂️',
-        'Ride': '🚴',
-        'VirtualRide': '🚴‍♂️',
-        'Swim': '🏊',
-        'WeightTraining': '🏋️',
-        'Hike': '🥾',
-        'Walk': '🚶'
+        'Run': '🏃', 'VirtualRun': '🏃‍♂️', 'Ride': '🚴', 'VirtualRide': '🚴‍♂️',
+        'Swim': '🏊', 'WeightTraining': '🏋️', 'Hike': '🥾', 'Walk': '🚶'
     };
     const logo = logos[activity.type] || '✨';
 
-    // 3. CALCUL PERFORMANCE
-    // On part du principe que moving_time est en SECONDES en base
     const totalSeconds = activity.moving_time;
     const durationMin = Math.floor(totalSeconds / 60);
     const durationSec = totalSeconds % 60;
@@ -89,36 +135,22 @@ const formatActivityMessage = (activity) => {
     }
 
     const effortScore = activity.custom_score || activity.suffer_score || 0;
-
-    // 4. ZONES CARDIAQUES AVEC COULEURS DASHBOARD
-    const zoneColors = {
-        0: '⚪', // Zone 1 - Récupération / Gris-Blanc
-        1: '🔵', // Zone 2 - Endurance / Bleu
-        2: '🟢', // Zone 3 - Tempo / Vert
-        3: '🟡', // Zone 4 - Seuil / Jaune-Orange
-        4: '🔴'  // Zone 5 - Anaérobie / Rouge
-    };
+    const zoneColors = { 0: '⚪', 1: '🔵', 2: '🟢', 3: '🟡', 4: '🔴' };
 
     let zonesMsg = "";
     try {
         const zones = typeof activity.hr_zones === 'string' ? JSON.parse(activity.hr_zones) : activity.hr_zones;
-        
         if (Array.isArray(zones) && zones.length >= 5 && zones[0].time !== undefined) {
             zonesMsg = zones.map((z, i) => {
                 const zMin = Math.floor(z.time / 60) || 0;
                 const zSec = z.time % 60 || 0;
-                const color = zoneColors[i] || '⚫';
-                return `${color} *Z${i + 1}* : ${zMin} min ${zSec < 10 ? '0' : ''}${zSec} sec`;
+                return `${zoneColors[i] || '⚫'} *Z${i + 1}* : ${zMin} min ${zSec < 10 ? '0' : ''}${zSec} sec`;
             }).join('\n');
-        } else {
-            zonesMsg = "Analyse cardio indisponible...";
-        }
-    } catch (e) {
-        zonesMsg = "Zones non disponibles";
-    }
+        } else { zonesMsg = "Analyse cardio indisponible..."; }
+    } catch (e) { zonesMsg = "Zones non disponibles"; }
 
     return `${logo} *${activity.name}*
-📅 ${dateStr} à ${timeStr}
+📅 ${dateStr}
 📍 Type : ${activity.type}
 
 📏 Distance : ${activity.distance.toFixed(2)} km
@@ -131,13 +163,5 @@ ${performanceStr}
 📊 *Temps dans les zones FC :*
 ${zonesMsg}`;
 };
-
-// Logique simple de coaching
-function getCoachAdvice(tsb, hrv) {
-    if (tsb < -15 && hrv < 50) return "⚠️ *REPOS FORCÉ* : Ta fatigue est haute et ta HRV est basse. Risque de blessure.";
-    if (tsb > 0 && hrv > 65) return "⚡ *GO !* : Tu es frais et ta récupération est au top. C'est le moment d'une grosse séance.";
-    if (tsb < -10) return "🧘 *ENDURANCE DOUCE* : Accumulation de fatigue. Reste en Zone 2 aujourd'hui.";
-    return "✅ *TRAINING OK* : Séance normale prévue. Écoute tes sensations.";
-}
 
 module.exports = { sendTelegramMessage, generateDailyReport, formatActivityMessage };

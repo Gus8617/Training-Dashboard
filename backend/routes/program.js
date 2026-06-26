@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const db = require('../database'); // Instance better-sqlite3
+const { computeAdaptiveSession } = require('../services/adaptativeEngine');
 
 // ==========================================
 // 1. IMPORTATION / MISE À JOUR DU PLANNING
@@ -232,6 +233,41 @@ router.post('/session', (req, res) => {
     console.error("❌ Erreur lors de l'ajout manuel de la séance :", error);
     return res.status(500).json({ success: false, error: error.message });
   }
+});
+
+
+// ==========================================
+// 6. GET : RÉCUPÉRER LA SÉANCE DU JOUR AVEC ADAPTATION
+// ==========================================
+router.get('/api/coach/today-session', (req, res) => {
+    try {
+        const userId = req.query.userId || 1;
+        const todayStr = new Date().toISOString().split('T')[0];
+
+        // 1. Récupérer la séance théorique du JSON (ou de la table planned_sessions)
+        const plannedSession = db.prepare(`
+            SELECT * FROM planned_sessions WHERE user_id = ? AND date = ?
+        `).get(userId, todayStr);
+
+        if (!plannedSession) {
+            return res.json({ session: null, message: "Aucun entraînement prévu aujourd'hui." });
+        }
+
+        // 2. Chercher l'état de forme du jour calculé par le Pi
+        const currentFitness = db.prepare("SELECT * FROM daily_fitness WHERE user_id = ? ORDER BY date DESC LIMIT 1").get(userId);
+        const currentHealth = db.prepare("SELECT * FROM health WHERE user_id = ? ORDER BY date DESC LIMIT 1").get(userId);
+
+        // 3. Calcul de l'adaptation en temps réel
+        const adaptiveSession = computeAdaptiveSession(plannedSession, currentFitness, currentHealth);
+
+        res.json({
+            original: plannedSession,   // Pour pouvoir comparer à l'écran
+            adaptive: adaptiveSession    // La séance recalculée que le sportif doit faire
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 module.exports = router;

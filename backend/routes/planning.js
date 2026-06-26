@@ -84,10 +84,6 @@ router.get('/', (req, res) => {
             ORDER BY date ASC
         `).all(numericUserId, startDateStr, endDateStr);
 
-        console.log("=== DIAGNOSTIC CALENDRIER ===");
-        console.log(`Plage recherchée : ${startDateStr} à ${endDateStr}`);
-        console.log(`Séances planifiées : ${plannedSessions.length} | Activités Strava : ${realActivities.length}`);
-
         let finalTimeline = [];
 
         // Boucle A : Corrélation avec une tolérance temporelle de 1 jour (Fuzzy Matching)
@@ -284,9 +280,11 @@ router.post('/generate', (req, res) => {
 router.post('/reschedule', async (req, res) => {
     try {
         const { userId } = req.body;
+        const isPreview = req.query.preview === 'true'; // 🎯 Détection du mode Preview
+
         if (!userId) return res.status(400).json({ success: false, error: "userId requis." });
 
-        const numericUserId = parseInt(userId, 10); // 🎯 FIX : Cast Id
+        const numericUserId = parseInt(userId, 10);
         const today = new Date();
         const todayStr = formatLocalYYYYMMDD(today);
         const dayOfWeekToday = today.getDay(); 
@@ -294,8 +292,21 @@ router.post('/reschedule', async (req, res) => {
         const currentWeekNum = getWeekNumber(today);
         const weekType = currentWeekNum % 2 === 0 ? 'even' : 'odd';
 
-        const fitness = db.prepare('SELECT readiness_score, hrv_status, tsb FROM daily_fitness WHERE user_id = ? AND date = ?').get(numericUserId, todayStr);
+        const fitness = db.prepare(`
+            SELECT readiness_score, tsb, hrv, hrv_baseline 
+            FROM daily_fitness 
+            WHERE user_id = ? AND date = ?
+        `).get(numericUserId, todayStr);
         
+        // Calcul dynamique du statut HRV si les données existent
+        let calculatedHrvStatus = 'balanced';
+        if (fitness && fitness.hrv && fitness.hrv_baseline) {
+            const hrvRatio = fitness.hrv / fitness.hrv_baseline;
+            if (hrvRatio < 0.85) {
+                calculatedHrvStatus = 'low';
+            }
+        }
+
         const restrictionToday = db.prepare(`
             SELECT is_blocked FROM user_constraints 
             WHERE user_id = ? AND day_of_week = ?
@@ -304,65 +315,112 @@ router.post('/reschedule', async (req, res) => {
         `).get(numericUserId, dayOfWeekToday, todayStr, weekType);
 
         const currentRestriction = restrictionToday ? Number(restrictionToday.is_blocked) : 0; 
-        const todaysSession = db.prepare('SELECT * FROM training_plan WHERE user_id = ? AND date = ? AND status = "planned"').get(numericUserId, todayStr);
-
+        const todaysSession = db.prepare("SELECT * FROM training_plan WHERE user_id = ? AND date = ? AND status = 'planned'").get(numericUserId, todayStr);
         if (!todaysSession) {
-            return res.json({ success: true, message: "Aucune séance théorique planifiée pour aujourd'hui." });
+            return res.json({ success: true, message: "Aucune séance théorique planifiée pour aujourd'hui.", modifications: [] });
         }
 
-        // Arbitrage Option 2 : Indisponibilité Absolue (Bloqué Strict)
+        // Structure pour stocker la modification si elle a lieu
+        let modification = null;
+
+        // 1️⃣ Arbitrage Option 2 : Indisponibilité Absolue (Bloqué Strict)
         if (currentRestriction === 2) {
-            db.prepare('UPDATE training_plan SET status = "skipped", description = "[Arbitrage] Annulé pour cause d\'indisponibilité absolue." WHERE id = ?').run(todaysSession.id);
-            return res.json({ success: true, message: "Agenda bloqué (Strict) : Séance annulée pour indisponibilité temporelle." });
+            modification = {
+                date: todayStr,
+                type: todaysSession.type,
+                title: todaysSession.title,
+                old_load: todaysSession.target_load || 0,
+                new_load: 0,
+                reason: "Indisponibilité absolue (Agenda bloqué)"
+            };
+
+            if (!isPreview) {
+                db.prepare('UPDATE training_plan SET status = "skipped", description = "[Arbitrage] Annulé pour cause d\'indisponibilité absolue." WHERE id = ?').run(todaysSession.id);
+            }
         }
 
-        // Arbitrage Option 1 : Agenda Hybride (Repli en intérieur)
-        if (currentRestriction === 1) {
+        // 2️⃣ Arbitrage Option 1 : Agenda Hybride (Repli en intérieur)
+        else if (currentRestriction === 1) {
             if (todaysSession.type === 'Run') {
-                db.prepare(`
-                    UPDATE training_plan 
-                    SET title = "Renforcement de Substitution", 
-                        type = "Strength",
-                        description = "[Arbitrage Indoor] Séance CAP extérieure impossible. Remplacé par du Core/Gainage stable en intérieur.",
-                        target_duration = 2700, 
-                        target_intensity_zone = "LIT",
-                        target_load = 20
-                    WHERE id = ?
-                `).run(todaysSession.id);
-                return res.json({ success: true, message: "Agenda Hybride : Course à pied extérieure mutée en renforcement intérieur." });
+                modification = {
+                    date: todayStr,
+                    type: "Strength", // Devient du renfo
+                    title: "Renforcement de Substitution",
+                    old_load: todaysSession.target_load || 0,
+                    new_load: 20,
+                    reason: "Repli Indoor : CAP extérieure mutée en Renfo"
+                };
+
+                if (!isPreview) {
+                    db.prepare(`
+                        UPDATE training_plan 
+                        SET title = ?, type = "Strength", description = "[Arbitrage Indoor] Séance CAP extérieure impossible. Remplacé par du Core/Gainage stable en intérieur.", target_duration = 2700, target_intensity_zone = "LIT", target_load = 20
+                        WHERE id = ?
+                    `).run(modification.title, todaysSession.id);
+                }
             } 
             
-            if (todaysSession.type === 'Ride' && !todaysSession.description.includes('home-trainer')) {
+            else if (todaysSession.type === 'Ride' && !todaysSession.description.includes('home-trainer')) {
                 const newTitle = `${todaysSession.title} (Format Home-Trainer)`;
-                const newDesc = `[Arbitrage Indoor] Transféré sur Home-Trainer : ${todaysSession.description}`;
-                const newLoad = Math.round(todaysSession.target_load * 0.85);
+                const newLoad = Math.round((todaysSession.target_load || 0) * 0.85);
 
-                db.prepare(`
-                    UPDATE training_plan 
-                    SET title = ?, description = ?, target_load = ?
-                    WHERE id = ?
-                `).run(newTitle, newDesc, newLoad, todaysSession.id);
-                return res.json({ success: true, message: "Agenda Hybride : Sortie Vélo adaptée au format Home-Trainer." });
+                modification = {
+                    date: todayStr,
+                    type: todaysSession.type,
+                    title: newTitle,
+                    old_load: todaysSession.target_load || 0,
+                    new_load: newLoad,
+                    reason: "Repli Indoor : Vélo adapté sur Home-Trainer (-15% TSS)"
+                };
+
+                if (!isPreview) {
+                    const newDesc = `[Arbitrage Indoor] Transféré sur Home-Trainer : ${todaysSession.description}`;
+                    db.prepare(`
+                        UPDATE training_plan 
+                        SET title = ?, description = ?, target_load = ?
+                        WHERE id = ?
+                    `).run(newTitle, newDesc, newLoad, todaysSession.id);
+                }
             }
         }
 
-        // Arbitrage Physiologique : HRV ou fatigue nerveuse
-        if (fitness && (fitness.readiness_score < 65 || fitness.hrv_status === 'low')) {
+        // 3️⃣ Arbitrage Physiologique : HRV ou fatigue nerveuse
+        else if (fitness && (fitness.readiness_score < 65 || calculatedHrvStatus === 'low')) {
             if (todaysSession.target_intensity_zone === 'HIT') {
-                db.prepare(`
-                    UPDATE training_plan 
-                    SET title = "Récupération Active Fatigué", 
-                        description = "Alerte Fatigue / HRV Bas. Séance haute intensité (HIT) annulée pour protéger le système nerveux.", 
-                        target_intensity_zone = "LIT", 
-                        target_load = 15 
-                    WHERE id = ?
-                `).run(todaysSession.id);
+                modification = {
+                    date: todayStr,
+                    type: todaysSession.type,
+                    title: "Récupération Active Fatigué",
+                    old_load: todaysSession.target_load || 0,
+                    new_load: 15,
+                    reason: `Alerte Fatigue (Readiness: ${fitness.readiness_score}, HRV: ${calculatedHrvStatus})`
+                };
 
-                return res.json({ success: true, message: "Alerte Physiologique : Système nerveux fatigué. HIT dégradé en récupération active." });
+                if (!isPreview) {
+                    db.prepare(`
+                        UPDATE training_plan 
+                        SET title = ?, description = "Alerte Fatigue / HRV Bas. Séance haute intensité (HIT) annulée pour protéger le système nerveux.", target_intensity_zone = "LIT", target_load = 15 
+                        WHERE id = ?
+                    `).run(modification.title, todaysSession.id);
+                }
             }
         }
 
-        return res.json({ success: true, message: "Feu vert : Agenda et métriques physiologiques au vert. Séance maintenue." });
+        // Renvoi de la réponse adaptée au mode (Preview vs Commit)
+        if (isPreview) {
+            return res.json({
+                success: true,
+                preview: true,
+                modifications: modification ? [modification] : [],
+                message: modification ? "Ajustement détecté par le moteur." : "Feu vert : Rien à modifier pour aujourd'hui."
+            });
+        } else {
+            return res.json({
+                success: true,
+                message: modification ? `Moteur exécuté : ${modification.reason}` : "Feu vert : Agenda et métriques au vert. Séance maintenue."
+            });
+        }
+
     } catch (error) {
         console.error("🔥 Erreur arbitrage:", error);
         res.status(500).json({ success: false, error: error.message });

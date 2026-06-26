@@ -49,9 +49,6 @@ export default function StatsDashboard({ user }) {
         <h1 className="text-4xl font-black mb-2 flex items-center gap-3">
           Analyses de Performance <span>📊</span>
         </h1>
-        <p className="text-slate-500 font-medium uppercase text-[10px] tracking-[0.3em]">
-          Volume annuel, distribution et courbes de charge CTL / ATL
-        </p>
       </div>
 
       {/* Rendu des composants de statistiques isolés */}

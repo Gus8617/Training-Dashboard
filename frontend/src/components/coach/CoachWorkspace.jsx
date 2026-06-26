@@ -1,6 +1,6 @@
 // src/components/coach/CoachWorkspace.jsx
 import React, { useState, useRef } from 'react';
-import { Upload, Sliders, LayoutGrid, Heart, Eye, CheckCircle, AlertTriangle, Plus, X } from 'lucide-react';
+import { Upload, Sliders, LayoutGrid, Heart, Eye, CheckCircle, AlertTriangle, Plus, X, RefreshCw, ArrowRight } from 'lucide-react';
 import SettingsTabs from '../settings/SettingsTabs';
 import ActiveProgramManager from './ActiveProgramManager';
 
@@ -20,6 +20,9 @@ export default function CoachWorkspace() {
   const [isRescheduling, setIsRescheduling] = useState(false);
   const [previewSessions, setPreviewSessions] = useState([]);
   
+  // Nouveaux états pour la prévisualisation de l'arbitrage adaptatif
+  const [arbitragePreview, setArbitragePreview] = useState(null); 
+
   // États pour la modale d'ajout manuel
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newSession, setNewSession] = useState({
@@ -33,7 +36,7 @@ export default function CoachWorkspace() {
   });
 
   const fileInputRef = useRef(null);
-  const programManagerRef = useRef(null); // Permet de trigger le rafraîchissement de la liste
+  const programManagerRef = useRef(null);
 
   const today = new Date();
   const currentWeekNum = getWeekNumber(today);
@@ -55,8 +58,6 @@ export default function CoachWorkspace() {
     reader.onload = (event) => {
       try {
         const parsedData = JSON.parse(event.target.result);
-        
-        // 🎯 On extrait le tableau depuis la clé '.sessions' ou on fallback si c'est un tableau brut
         const sessionsArray = parsedData.sessions && Array.isArray(parsedData.sessions) 
           ? parsedData.sessions 
           : (Array.isArray(parsedData) ? parsedData : null);
@@ -76,20 +77,17 @@ export default function CoachWorkspace() {
   const handleConfirmImport = async () => {
     if (previewSessions.length === 0) return;
     setLoading(true);
-
     try {
       const res = await fetch('/api/program/import', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // previewSessions contient uniquement le tableau des séances maintenant extrait
         body: JSON.stringify({ userId: 1, programData: previewSessions }) 
       });
-
       const data = await res.json();
       if (data.success) {
         alert("Le planning théorique a été écrasé et mis à jour avec succès !");
         setPreviewSessions([]);
-        programManagerRef.current?.fetchActiveProgram(); // Synchro directe du manager
+        programManagerRef.current?.fetchActiveProgram();
         window.dispatchEvent(new Event('reload-calendar'));
       } else {
         alert(`Erreur serveur: ${data.error}`);
@@ -111,10 +109,8 @@ export default function CoachWorkspace() {
         body: JSON.stringify({ userId: 1, ...newSession })
       });
       const data = await res.json();
-      
       if (data.success) {
         setIsAddModalOpen(false);
-        // Reset du formulaire
         setNewSession({
           date: new Date().toISOString().split('T')[0],
           type: 'Ride',
@@ -124,7 +120,6 @@ export default function CoachWorkspace() {
           target_intensity_zone: 'LIT',
           description: ''
         });
-        // Rafraîchir l'affichage du gestionnaire et du calendrier global
         programManagerRef.current?.fetchActiveProgram();
         window.dispatchEvent(new Event('reload-calendar'));
       } else {
@@ -135,23 +130,48 @@ export default function CoachWorkspace() {
     }
   };
 
-  const handleTriggerArbitrage = async () => {
-    if (!window.confirm("Lancer l'analyse et l'adaptation du plan (Arbitrage Garmin/Strava) ?")) return;
+  // Étape 1 : Demande de simulation d'arbitrage (Calcul des deltas)
+  const handleTriggerArbitragePreview = async () => {
     setIsRescheduling(true);
     try {
-      const res = await fetch('/api/planning/reschedule', { 
+      // On passe un flag preview=true à ton endpoint d'arbitrage
+      const res = await fetch('/api/planning/reschedule?preview=true', { 
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' }, 
         body: JSON.stringify({ userId: 1, weekType: isCurrentWeekEven ? 'even' : 'odd' }) 
       });
       const data = await res.json();
-      alert(data.message || `Moteur d'arbitrage exécuté.`);
+      
+      if (data.success && data.modifications) {
+        setArbitragePreview(data.modifications); // Stocke le tableau des deltas prévus
+      } else {
+        alert(data.message || "Aucune modification structurelle jugée nécessaire par le moteur.");
+      }
+    } catch (err) {
+      console.error("Erreur lors de la simulation d'arbitrage:", err);
+    } finally {
+      setIsRescheduling(false);
+    }
+  };
+
+  // Étape 2 : Confirmation et application définitive dans SQLite
+  const handleConfirmArbitrage = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('/api/planning/reschedule', { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ userId: 1, weekType: isCurrentWeekEven ? 'even' : 'odd', commit: true }) 
+      });
+      const data = await res.json();
+      alert(data.message || `Moteur d'arbitrage exécuté avec succès.`);
+      setArbitragePreview(null);
       programManagerRef.current?.fetchActiveProgram();
       window.dispatchEvent(new Event('reload-calendar'));
     } catch (err) {
       console.error(err);
     } finally {
-      setIsRescheduling(false);
+      setLoading(false);
     }
   };
 
@@ -206,15 +226,12 @@ export default function CoachWorkspace() {
                 onChange={handleJsonLoadPreview} 
                 className="hidden" 
               />
-              
-              {/* 🎯 NOUVEAU BOUTON : AJOUT MANUEL */}
               <button 
                 onClick={() => setIsAddModalOpen(true)}
                 className="bg-blue-600 hover:bg-blue-500 text-white font-black text-[10px] uppercase tracking-wider px-4 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-md shadow-blue-900/20"
               >
                 <Plus size={12} /> Créer une séance
               </button>
-
               <button 
                 onClick={() => fileInputRef.current?.click()} 
                 className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-bold text-[10px] uppercase tracking-wider px-4 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 shadow-md"
@@ -238,36 +255,21 @@ export default function CoachWorkspace() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button 
-                    onClick={() => setPreviewSessions([])} 
-                    className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 font-bold text-[9px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all"
-                  >
-                    Annuler
-                  </button>
-                  <button 
-                    onClick={handleConfirmImport} 
-                    disabled={loading}
-                    className="bg-blue-600 hover:bg-blue-500 text-white font-black text-[9px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-md shadow-blue-600/10"
-                  >
-                    <CheckCircle size={12} /> {loading ? "Injection..." : "Confirmer et Injecter"}
-                  </button>
+                  <button onClick={() => setPreviewSessions([])} className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 font-bold text-[9px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all">Annuler</button>
+                  <button onClick={handleConfirmImport} disabled={loading} className="bg-blue-600 hover:bg-blue-500 text-white font-black text-[9px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-md to-blue-600/10"><CheckCircle size={12} /> {loading ? "Injection..." : "Confirmer et Injecter"}</button>
                 </div>
               </div>
-
               <div className="max-h-[250px] overflow-y-auto border border-slate-800/60 bg-slate-950/50 rounded-xl font-mono text-[11px] divide-y divide-slate-900">
                 {previewSessions.map((session, idx) => (
                   <div key={idx} className="p-3 flex items-center justify-between gap-4 hover:bg-slate-900/40 transition-colors">
                     <div className="flex items-center gap-4">
                       <span className="text-slate-500 font-bold w-20">{session.date}</span>
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wide border ${getTypeColor(session.type)}`}>
-                        {session.type}
-                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wide border ${getTypeColor(session.type)}`}>{session.type}</span>
                       <span className="text-slate-300 font-sans font-medium truncate max-w-[200px] sm:max-w-[350px]">{session.title || session.description || 'Séance sans titre'}</span>
                     </div>
                     <div className="flex items-center gap-6 shrink-0 text-right">
                       {session.duration_minutes && <span className="text-slate-400">{session.duration_minutes} min</span>}
                       {session.target_load && <span className="text-blue-400 font-bold">{session.target_load} TSS</span>}
-                      {session.target_intensity_zone && <span className="text-slate-600 font-sans text-[10px] font-bold">{session.target_intensity_zone}</span>}
                     </div>
                   </div>
                 ))}
@@ -275,7 +277,44 @@ export default function CoachWorkspace() {
             </div>
           )}
 
-          {/* 📊 MANAGER DU PROGRAMME PREVISIONNEL EN COURS */}
+          {/* VUE DE PRÉVISUALISATION DE L'ARBITRAGE ADAPTATIF */}
+          {arbitragePreview && (
+            <div className="bg-slate-900 border border-amber-500/30 rounded-2xl p-5 space-y-4 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <RefreshCw size={16} className="text-amber-500 animate-spin [animation-duration:8s]" />
+                  <div>
+                    <h4 className="text-xs font-black uppercase tracking-wider text-amber-500">Plan de Recalcul Proposé par le Moteur</h4>
+                    <p className="text-[10px] text-slate-400 mt-0.5 font-medium">Analyse comparative effectuée. Voici les ajustements de charge identifiés pour équilibrer ton TSB.</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setArbitragePreview(null)} className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 font-bold text-[9px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all">Rejeter</button>
+                  <button onClick={handleConfirmArbitrage} disabled={loading} className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[9px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-md"><CheckCircle size={12} /> Appliquer les Changements</button>
+                </div>
+              </div>
+              
+              <div className="max-h-[250px] overflow-y-auto border border-slate-800/60 bg-slate-950/50 rounded-xl font-mono text-[11px] divide-y divide-slate-900">
+                {arbitragePreview.map((mod, idx) => (
+                  <div key={idx} className="p-3 flex items-center justify-between gap-4 hover:bg-slate-900/40 transition-colors">
+                    <div className="flex items-center gap-4">
+                      <span className="text-slate-500 font-bold w-20">{mod.date}</span>
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wide border ${getTypeColor(mod.type)}`}>{mod.type}</span>
+                      <span className="text-slate-200 font-sans font-medium truncate max-w-[150px] sm:max-w-[280px]">{mod.title}</span>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs font-bold">
+                      <div className="text-slate-500 line-through text-[10px]">{mod.old_load} TSS</div>
+                      <ArrowRight size={12} className="text-amber-500" />
+                      <div className="text-amber-400">{mod.new_load} TSS</div>
+                      <span className="text-[9px] bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded text-slate-400 font-sans font-normal">{mod.reason}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* MANAGER DU PROGRAMME PREVISIONNEL EN COURS */}
           <ActiveProgramManager ref={programManagerRef} getTypeColor={getTypeColor} />
 
           {/* SECTION : LE MOTEUR D'ARBITRAGE ET AGENTS IA */}
@@ -291,11 +330,11 @@ export default function CoachWorkspace() {
                 </p>
               </div>
               <button 
-                onClick={handleTriggerArbitrage} 
-                disabled={isRescheduling} 
-                className="w-full mt-6 bg-slate-950 border border-slate-800 hover:border-amber-500/40 text-[10px] text-slate-200 py-3 rounded-xl font-black tracking-wider uppercase transition-all disabled:opacity-50"
+                onClick={handleTriggerArbitragePreview} 
+                disabled={isRescheduling || !!arbitragePreview} 
+                className="w-full mt-6 bg-slate-950 border border-slate-800 hover:border-amber-500/40 text-[10px] text-slate-200 py-3 rounded-xl font-black tracking-wider uppercase transition-all disabled:opacity-40"
               >
-                {isRescheduling ? 'Calcul de la balance TSB...' : 'Forcer la synchronisation & Adapter'}
+                {isRescheduling ? 'Analyse de la balance TSB...' : 'Simuler & Analyser l\'arbitrage'}
               </button>
             </div>
 
@@ -303,7 +342,7 @@ export default function CoachWorkspace() {
               <div>
                 <h4 className="text-xs font-black uppercase tracking-wider text-slate-500">Assistant Coach IA (Prochaine Étape)</h4>
                 <p className="text-[11px] text-slate-600 mt-3 leading-relaxed font-sans">
-                  Génère des blocs de programmation dynamiques directement via une consigne textuelle. (Ex: "Prépare-moi un bloc de développement PMA de 4 semaines avec de la course à pied").
+                  Génère des blocs de programmation dynamiques directement via une consigne textuelle.
                 </p>
               </div>
               <div className="mt-4 bg-slate-950/40 border border-slate-900 text-[10px] text-slate-600 p-3 rounded-xl">
@@ -313,51 +352,26 @@ export default function CoachWorkspace() {
           </div>
         </div>
       ) : (
-        <SettingsTabs 
-          userId={1} 
-          currentWeekStartDate={getStartDateStr()} 
-          isCurrentWeekEven={isCurrentWeekEven} 
-          DAYS={DAYS}
-        />
+        <SettingsTabs userId={1} currentWeekStartDate={getStartDateStr()} isCurrentWeekEven={isCurrentWeekEven} DAYS={DAYS} />
       )}
 
-      {/* ==========================================
-          🎯 DESIGN MODALE : CREATION MANUELLE DE SEANCE
-          ========================================== */}
+      {/* MODALE : CREATION MANUELLE */}
       {isAddModalOpen && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl shadow-2xl p-6 relative space-y-4">
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 border border-slate-800 w-full max-w-md rounded-2xl p-6 relative space-y-4">
             <div className="flex justify-between items-center border-b border-slate-800 pb-3">
-              <h3 className="text-xs font-black uppercase tracking-wider text-slate-100 flex items-center gap-2">
-                <Plus size={14} className="text-blue-500" /> Planifier une séance unitaire
-              </h3>
-              <button 
-                onClick={() => setIsAddModalOpen(false)} 
-                className="text-slate-400 hover:text-slate-200 transition-colors"
-              >
-                <X size={16} />
-              </button>
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-100 flex items-center gap-2"><Plus size={14} className="text-blue-500" /> Planifier une séance unitaire</h3>
+              <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-200"><X size={16} /></button>
             </div>
-
             <form onSubmit={handleAddManualSession} className="space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Date</label>
-                  <input 
-                    type="date"
-                    required
-                    value={newSession.date}
-                    onChange={(e) => setNewSession({...newSession, date: e.target.value})}
-                    className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
-                  />
+                  <input type="date" required value={newSession.date} onChange={(e) => setNewSession({...newSession, date: e.target.value})} className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2" />
                 </div>
                 <div>
                   <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Sport</label>
-                  <select 
-                    value={newSession.type}
-                    onChange={(e) => setNewSession({...newSession, type: e.target.value})}
-                    className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
-                  >
+                  <select value={newSession.type} onChange={(e) => setNewSession({...newSession, type: e.target.value})} className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2">
                     <option value="Ride">🚴 Cyclisme (Ride)</option>
                     <option value="Run">🏃 Course à pied (Run)</option>
                     <option value="Swim">🏊 Natation (Swim)</option>
@@ -365,79 +379,35 @@ export default function CoachWorkspace() {
                   </select>
                 </div>
               </div>
-
               <div>
                 <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Titre de la séance</label>
-                <input 
-                  type="text"
-                  required
-                  placeholder="Ex: Seuil 3x10min ou Endurance Fondamentale"
-                  value={newSession.title}
-                  onChange={(e) => setNewSession({...newSession, title: e.target.value})}
-                  className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
-                />
+                <input type="text" required placeholder="Ex: Seuil 3x10min" value={newSession.title} onChange={(e) => setNewSession({...newSession, title: e.target.value})} className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2" />
               </div>
-
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Durée (min)</label>
-                  <input 
-                    type="number"
-                    placeholder="60"
-                    value={newSession.duration_minutes}
-                    onChange={(e) => setNewSession({...newSession, duration_minutes: e.target.value})}
-                    className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
-                  />
+                  <input type="number" placeholder="60" value={newSession.duration_minutes} onChange={(e) => setNewSession({...newSession, duration_minutes: e.target.value})} className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2" />
                 </div>
                 <div>
                   <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Charge (TSS)</label>
-                  <input 
-                    type="number"
-                    placeholder="55"
-                    value={newSession.target_load}
-                    onChange={(e) => setNewSession({...newSession, target_load: e.target.value})}
-                    className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
-                  />
+                  <input type="number" placeholder="55" value={newSession.target_load} onChange={(e) => setNewSession({...newSession, target_load: e.target.value})} className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2" />
                 </div>
                 <div>
                   <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Zone d'Intensité</label>
-                  <select 
-                    value={newSession.target_intensity_zone}
-                    onChange={(e) => setNewSession({...newSession, target_intensity_zone: e.target.value})}
-                    className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
-                  >
+                  <select value={newSession.target_intensity_zone} onChange={(e) => setNewSession({...newSession, target_intensity_zone: e.target.value})} className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2">
                     <option value="LIT">🟢 LIT (Basse)</option>
                     <option value="MIT">🟡 MIT (Modérée)</option>
                     <option value="HIT">🔴 HIT (Haute)</option>
                   </select>
                 </div>
               </div>
-
               <div>
-                <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Description / Consignes de l'exercice</label>
-                <textarea 
-                  rows="3"
-                  placeholder="Détails des blocs d'effort..."
-                  value={newSession.description}
-                  onChange={(e) => setNewSession({...newSession, description: e.target.value})}
-                  className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500 font-sans"
-                ></textarea>
+                <label className="block text-slate-400 font-bold uppercase tracking-wide text-[10px] mb-1">Description</label>
+                <textarea rows="3" placeholder="Détails..." value={newSession.description} onChange={(e) => setNewSession({...newSession, description: e.target.value})} className="w-full bg-slate-950 border border-slate-800 text-slate-200 rounded-xl px-3 py-2" />
               </div>
-
               <div className="flex justify-end gap-2 border-t border-slate-800 pt-3">
-                <button 
-                  type="button"
-                  onClick={() => setIsAddModalOpen(false)}
-                  className="bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-400 font-bold text-[10px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all"
-                >
-                  Annuler
-                </button>
-                <button 
-                  type="submit"
-                  className="bg-blue-600 hover:bg-blue-500 text-white font-black text-[10px] uppercase tracking-wider px-4 py-2 rounded-xl transition-all shadow-md shadow-blue-600/10"
-                >
-                  Enregistrer la séance
-                </button>
+                <button type="button" onClick={() => setIsAddModalOpen(false)} className="bg-slate-950 border border-slate-800 text-slate-400 px-4 py-2 rounded-xl">Annuler</button>
+                <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-xl">Enregistrer la séance</button>
               </div>
             </form>
           </div>

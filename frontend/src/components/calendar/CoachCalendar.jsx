@@ -1,6 +1,6 @@
 // src/components/calendar/CoachCalendar.jsx
 import React, { useState, useEffect } from 'react';
-import { ChevronLeft, ChevronRight, Construction, Trash2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Trash2, Brain } from 'lucide-react';
 import WorkoutCard from './WorkoutCard';
 
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -20,6 +20,68 @@ function formatLocalYYYYMMDD(date) {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Moteur Adaptatif local côté Client (Calculé à la volée pour aujourd'hui)
+ * Exploite la dynamic_hrv_baseline calculée par ton kernel.
+ */
+function applyAdaptiveEngine(session, fitness, health) {
+  if (!session || session.is_unpredicted || !!session.realized) return session;
+
+  const tsb = fitness?.tsb || 0;
+  
+  // Utilisation de la baseline dynamique de ton graphique (fallback à 63 ms si non reçue)
+  const hrv = health?.hrv || 63;
+  const hrvBaseline = health?.dynamic_hrv_baseline || 63; 
+  const sleepScore = health?.sleep_score || 80;
+
+  let tssModifier = 1.0;
+  let durationModifier = 1.0;
+  let advice = "";
+  let isAdapted = false;
+  let updatedName = session.name;
+
+  // Cas 1 : Fatigue critique (TSB trop bas ou chute HRV sévère sous 85% de la baseline)
+  if (tsb < -25 || hrv < (hrvBaseline * 0.85)) {
+    tssModifier = 0.4;
+    durationModifier = 0.5;
+    updatedName = `[ADAPTÉ - RÉCUP] ${session.name}`;
+    advice = "🛑 Système nerveux saturé sous la baseline dynamique. Séance bridée en endurance Z1/Z2.";
+    isAdapted = true;
+  }
+  // Cas 2 : Fatigue nerveuse naissante (HRV sous la baseline dynamique)
+  else if (tsb <= -10 && hrv < hrvBaseline) {
+    tssModifier = 0.8;
+    advice = "🧘 Fatigue nerveuse détectée (HRV sous la baseline). Coupe les intensités Z4/Z5, reste linéaire.";
+    isAdapted = true;
+  }
+  // Cas 3 : Mauvaise nuit ponctuelle
+  else if (sleepScore < 65 && tsb > -10) {
+    tssModifier = 0.85;
+    durationModifier = 0.9;
+    advice = "💤 Sommeil altéré : Vigilance basse. Séance légèrement rabotée pour limiter le stress fonctionnel.";
+    isAdapted = true;
+  }
+  // Cas 4 : Super-forme (HRV au-dessus de la baseline dynamique)
+  else if (tsb > 5 && hrv > (hrvBaseline + 3)) {
+    tssModifier = 1.15;
+    advice = "⚡ Voyants au vert : HRV supérieure à la baseline dynamique. Prêt à encaisser du lourd !";
+    isAdapted = true;
+  }
+
+  if (!isAdapted) return session;
+
+  return {
+    ...session,
+    name: updatedName,
+    target_load: Math.round((session.target_load || 0) * tssModifier),
+    target_duration: Math.round((session.target_duration || 0) * durationModifier),
+    is_adapted: true,
+    original_load: session.target_load,
+    original_duration: session.target_duration,
+    adaptive_advice: advice
+  };
+}
+
 export default function CoachCalendar() {
   const [viewMode, setViewMode] = useState('week'); 
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -27,7 +89,8 @@ export default function CoachCalendar() {
   
   const [calendarData, setCalendarData] = useState({
     sessions: [],
-    fitnessDay: { ctl: 0, atl: 0, tsb: 0, readiness_score: 100 }
+    fitnessDay: { ctl: 0, atl: 0, tsb: 0, readiness_score: 100 },
+    healthDay: { hrv: 63, dynamic_hrv_baseline: 63, sleep_score: 80 }
   });
 
   const getStartDateStr = () => {
@@ -53,7 +116,8 @@ export default function CoachCalendar() {
       if (data.success) {
         setCalendarData({
           sessions: data.days || [],
-          fitnessDay: data.fitness || { ctl: 45.2, atl: 38.0, tsb: 7.2, readiness_score: 85 }
+          fitnessDay: data.fitness || { ctl: 45.2, atl: 38.0, tsb: 7.2, readiness_score: 85 },
+          healthDay: data.health || { hrv: 67, dynamic_hrv_baseline: 63, sleep_score: 78 }
         });
       }
     } catch (err) {
@@ -155,23 +219,26 @@ export default function CoachCalendar() {
     const activeSessions = generateGridDays().filter(d => !d.isPadding).flatMap(d => d.sessions);
 
     activeSessions.forEach(s => {
-      let duration = s.target_duration || 0;
-      if (!duration && s.realized?.duration_minutes) {
-        duration = s.realized.duration_minutes * 60;
+      const isTodaySession = s.date === todayStr;
+      const computedSession = isTodaySession ? applyAdaptiveEngine(s, calendarData.fitnessDay, calendarData.healthDay) : s;
+
+      let duration = computedSession.target_duration || 0;
+      if (!duration && computedSession.realized?.duration_minutes) {
+        duration = computedSession.realized.duration_minutes * 60;
       }
       
-      const tss = s.target_load || s.realized?.actual_load || 0;
+      const tss = computedSession.target_load || computedSession.realized?.actual_load || 0;
 
       summary.totalDuration += duration;
       summary.totalTss += tss;
 
-      const type = s.type ? s.type.toLowerCase() : 'ride';
+      const type = computedSession.type ? computedSession.type.toLowerCase() : 'ride';
       if (type === 'swim') summary.swimDuration += duration;
       else if (type === 'ride' || type === 'bike') summary.bikeDuration += duration;
       else if (type === 'run') summary.runDuration += duration;
       else if (type === 'strength') summary.strengthDuration += duration;
 
-      const zone = s.target_intensity_zone?.toUpperCase();
+      const zone = computedSession.target_intensity_zone?.toUpperCase();
       if (zone === 'LIT') summary.litCount++;
       else if (zone === 'MIT') summary.mitCount++;
       else if (zone === 'HIT') summary.hitCount++;
@@ -200,7 +267,7 @@ export default function CoachCalendar() {
       {/* BARRE INTERNE DE LA GRILLE CALENDRIER */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 pt-2">
         <div className="text-xs font-black uppercase text-slate-400 tracking-wider">
-          Planification Courante <span className="text-[10px] text-slate-500 ml-1">(Semaine {currentWeekNum} - {isCurrentWeekEven ? 'Paire' : 'Impaire'})</span>
+          Planification Courante <span className="text-[10px] text-slate-500 font-normal">(Semaine {currentWeekNum} - {isCurrentWeekEven ? 'Paire' : 'Impaire'})</span>
         </div>
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
           <button 
@@ -282,18 +349,29 @@ export default function CoachCalendar() {
                     {day.sessions.length === 0 ? (
                       <div className="text-[9px] text-slate-600 italic font-medium mt-1">Assimilation</div>
                     ) : (
-                      day.sessions.map(session => {
+                      day.sessions.map(s => {
+                        // Injection des métriques physiologiques dynamiques d'aujourd'hui
+                        const session = isToday ? applyAdaptiveEngine(s, calendarData.fitnessDay, calendarData.healthDay) : s;
+
                         const isMatch = !session.is_unpredicted && !!session.realized;
                         const isImprovisé = !!session.is_unpredicted;
 
                         return (
-                          <WorkoutCard 
-                            key={session.id}
-                            session={session}
-                            isMatch={isMatch}
-                            isImprovisé={isImprovisé}
-                            onDelete={handleDeleteSession}
-                          />
+                          <div key={session.id} className="relative group">
+                            <WorkoutCard 
+                              session={session}
+                              isMatch={isMatch}
+                              isImprovisé={isImprovisé}
+                              onDelete={handleDeleteSession}
+                            />
+                            {/* Bloc d'explication si la séance subit une adaptation */}
+                            {session.is_adapted && (
+                              <div className="mt-1 p-1 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[8px] rounded font-medium leading-normal flex items-center gap-1">
+                                <Brain size={10} className="shrink-0 text-orange-400 animate-pulse"/>
+                                <span>{session.adaptive_advice}</span>
+                              </div>
+                            )}
+                          </div>
                         );
                       })
                     )}
@@ -303,11 +381,9 @@ export default function CoachCalendar() {
             })}
           </div>
 
-          {/* BANDEAU DE SYNTHÈSE GLOBAL DU BAS (FIXÉ POUR MOBILE) */}
+          {/* BANDEAU DE SYNTHÈSE GLOBAL DU BAS */}
           {viewMode === 'week' && (
             <div className="bg-slate-900/80 border border-slate-800/80 rounded-xl p-4 text-xs font-medium text-slate-300 shadow-inner flex flex-col lg:flex-row gap-6 items-stretch lg:items-center justify-between w-full overflow-hidden">
-              
-              {/* Conteneur Tableau avec Scroll de secours uniquement sur le tableau si l'écran est minuscule */}
               <div className="w-full lg:w-1/2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                 <table className="w-full text-left font-mono text-[11px] min-w-[400px] lg:min-w-0">
                   <thead>
@@ -333,7 +409,7 @@ export default function CoachCalendar() {
                 </table>
               </div>
 
-              {/* Barre de répartition de l'intensité */}
+              {/* Intensity Distribution */}
               <div className="w-full lg:flex-1 flex flex-col gap-1.5">
                 <div className="flex flex-wrap justify-between gap-1 font-mono text-[10px] uppercase text-slate-400 font-bold tracking-wider">
                   <span>Intensity Distribution</span>
@@ -345,7 +421,6 @@ export default function CoachCalendar() {
                   {weeklySummary.hitPct > 0 && <div className="h-full bg-red-500 transition-all flex items-center justify-center text-[8px] font-black text-white" style={{ width: `${weeklySummary.hitPct}%` }} title="HIT">{weeklySummary.hitPct}%</div>}
                 </div>
               </div>
-
             </div>
           )}
         </div>
