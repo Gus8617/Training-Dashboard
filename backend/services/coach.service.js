@@ -1,4 +1,5 @@
 // services/coach.service.js
+// Permet de gérer les séances manquées et d'appliquer les règles de récupération physiologique
 const db = require('../database');
 const { computeFitness } = require('./fitness.service');
 

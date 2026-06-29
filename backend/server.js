@@ -46,6 +46,7 @@ require('./cron');
 const authRoutes = require('./routes/auth');
 const dataRoutes = require('./routes/data');
 const devRoutes = require('./routes/dev');
+const coachRouter = require('./routes/coach');
 const planningRoutes = require('./routes/planning');
 const programRoutes = require('./routes/program');
 const { syncAll } = require('./services/strava.service');
@@ -54,6 +55,8 @@ const { syncGarminHealth } = require('./services/garmin.service');
 const constraintsRouter = require('./routes/constraints');
 const recurringSessionsRouter = require('./routes/recurringSessions');
 
+
+app.use('/api/coach', coachRouter)
 app.use('/api/program', programRoutes);
 app.use('/api/planning', planningRoutes);
 app.use('/api/constraints', constraintsRouter);

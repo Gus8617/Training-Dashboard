@@ -4,6 +4,8 @@ const db = require('../database');
 const { syncAll } = require('../services/strava.service');
 const { syncGarminHealth } = require('../services/garmin.service');
 const { computeFitness } = require('../services/fitness.service');
+const { generateDailyInsight } = require('../services/insightsAgent');
+
 
 // =========================================================================
 // 📑 CORE MONITORING & SYNCHRONISATION (REMIS EXACTEMENT COMME AVANT)
@@ -233,6 +235,17 @@ router.delete('/recurring-sessions/delete/:id', (req, res) => {
         }
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+
+router.get('/insights/daily-explanation', async (req, res) => {
+    console.log("🔍 Requête pour l'insight quotidien reçue.")  ;
+    try {
+        const insightText = await generateDailyInsight();
+        res.json({ insight: insightText });
+    } catch (error) {
+        res.status(500).json({ error: "Impossible de générer le point métrique du jour." });
     }
 });
 
